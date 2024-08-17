@@ -5,7 +5,7 @@ using System.Collections.Generic;
 
 public class UnrealRS2EditorTarget : TargetRules
 {
-	public UnrealRS2EditorTarget( TargetInfo Target) : base(Target)
+	public UnrealRS2EditorTarget(TargetInfo Target) : base(Target)
 	{
 		Type = TargetType.Editor;
 		DefaultBuildSettings = BuildSettingsVersion.V5;

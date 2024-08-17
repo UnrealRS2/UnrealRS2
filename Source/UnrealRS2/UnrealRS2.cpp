@@ -4,3 +4,6 @@
 #include "Modules/ModuleManager.h"
 
 IMPLEMENT_PRIMARY_GAME_MODULE( FDefaultGameModuleImpl, UnrealRS2, "UnrealRS2" );
+
+DEFINE_LOG_CATEGORY(LogUnrealRS2)
+ 
