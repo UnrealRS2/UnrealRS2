@@ -1,0 +1,92 @@
+﻿### Unreal Engine ###
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+*.VC.db
+*.VC.opendb
+*.sdf
+*.suo
+*.opensdf
+*.log
+*.pdb
+*.db
+*.idb
+
+# Unreal user settings
+*.user
+*.userprefs
+*.user.*
+*.vsconfig
+
+# Unreal build configs
+*.xcodeproj
+*.xcworkspace
+*.xcuserstate
+*.xcsettings
+*.xcscmblueprint
+
+### Visual Studio ###
+.vs/
+*.vcxproj
+*.vcxproj.*
+*.sln
+*.sln.docstates
+
+# Build artifacts
+Debug/
+Release/
+x64/
+x86/
+[Aa][Rr][Mm]64/
+[Aa][Rr][Mm]/
+bld/
+out/
+ipch/
+
+# Profiling
+*.psess
+*.vsp
+*.vspx
+*.sap
+
+### Rider / CLion ###
+.idea/
+.cmake/
+cmake-build-*/
+cmake-build-*/
+*.iws
+
+### Other IDEs ###
+*.iml
+*.ipr
+
+### OS Files ###
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.nfs*
+
+### Logs ###
+*.log
+*.tlog
+*.dmp
+
+### Package managers ###
+# Node (if you happen to use it for tooling)
+node_modules/
+
+# Python virtualenv
+.venv/
+__pycache__/
+*.pyc
