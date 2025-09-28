@@ -24,16 +24,16 @@ public:
 				if (PC && PC->GetHUD())
 				{
 					// Set debug print callback for client
-					SetPrintCallback([](const char* message)
+					api::SetPrintCallback([](const char* message)
 					{
-						if (GEngine && GEngine->GameViewport)
+						if (message && GEngine && GEngine->GameViewport)
 						{
-							GEngine->AddOnScreenDebugMessage(-1, 240.f, FColor::Green, FString(message));
+							GEngine->AddOnScreenDebugMessage(-1,  120.f, FColor::Green, FString(message));
 						}
 					});
 
-					// test print callback / dll functionality
-					Init();
+					// tests debug print callback / init client
+					api::Init();
 				}
 			});
 		});
@@ -43,6 +43,8 @@ public:
 	{
 		// Optional: cleanup if needed
 	}
+
+
 };
 
 IMPLEMENT_PRIMARY_GAME_MODULE( FUnrealRS2Module, UnrealRS2, "UnrealRS2" );
