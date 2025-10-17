@@ -1,13 +1,16 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UnrealRS2.h"
+
+#include "bridge.h"
 #include "Modules/ModuleManager.h"
-#include "client_377.h"
 #include "Microsoft/AllowMicrosoftPlatformTypes.h"
 
 // Define the static members
 UTexture2D* FUnrealRS2Module::GClientTexture = nullptr;
 int32 FUnrealRS2Module::CurrentDrawColor = 0;
+
+
 
 bool started = false;
 
@@ -60,8 +63,6 @@ static void Unreal_DrawRect(int x, int y, int w, int h)
 
 void RegisterUnrealPlatformCallbacks()
 {
-	api::g_PlatformCallbacks.setColor = &Unreal_SetColor;
-	api::g_PlatformCallbacks.drawRect = &Unreal_DrawRect;
 }
 	
 void Unreal_InitTexture()
@@ -87,7 +88,7 @@ void Unreal_InitTexture()
 		if (!started)
 		{
 			Unreal_InitTexture();
-			RegisterUnrealPlatformCallbacks();
+			//RegisterUnrealPlatformCallbacks();
 			started = true;
 		}
 		
@@ -105,17 +106,9 @@ void Unreal_InitTexture()
 				APlayerController* PC = World->GetFirstPlayerController();
 				if (PC && PC->GetHUD())
 				{
-					// Set debug print callback for client
-					api::SetPrintCallback([](const char* message)
-					{
-						if (message && GEngine && GEngine->GameViewport)
-						{
-							GEngine->AddOnScreenDebugMessage(-1,  120.f, FColor::Green, FString(message));
-						}
-					});
-
-					// tests debug print callback / init client
-					api::Init();
+					GEngine->AddOnScreenDebugMessage(-1,  120.f, FColor::Green, FString("Starting RS2"));
+					rs2_start_client();
+					GEngine->AddOnScreenDebugMessage(-1,  120.f, FColor::Green, FString("RS2 Loaded"));
 				}
 			});
 		});
@@ -125,6 +118,8 @@ void Unreal_InitTexture()
 	{
 		// Optional: cleanup if needed
 	}
+
+
 
 IMPLEMENT_PRIMARY_GAME_MODULE( FUnrealRS2Module, UnrealRS2, "UnrealRS2" );
 
