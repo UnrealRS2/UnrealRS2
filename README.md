@@ -18,8 +18,7 @@ It works in two main ways:
 ### Benefits
 
 - ✅ **Authentic RS2 rendering** — CPU rasterizer provides an authentic scene, Unreal enhances it.
-- ✅ **Enhanced fidelity** — Unreal can upscale resolution, apply post-processing, or modernize shaders.
-- ✅ **Clean separation** — client logic stays in `client-377`, rendering is handled by Unreal.
+- ✅ **Enhanced fidelity** — Unreal can upscale resolution, apply post-processing, or modernize shaders.  
 
 ## Requirements
 
