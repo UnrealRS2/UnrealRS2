@@ -13,7 +13,7 @@ It works in two main ways:
   The viewport remains transparent, allowing clean overlay and integration.
 
 - **Scene graph triangles**:  
-  Instead of converting assets or reimplementing formats in Unreal, UnrealRS2 consumes the raw triangles rasterized by [client-377](https://github.com/UnrealRS2/client-377).
+  Instead of converting assets or reimplementing formats in Unreal, UnrealRS2 consumes the raw triangles rasterized by RS2's cpu rasterizer.
 
 ### Benefits
 
