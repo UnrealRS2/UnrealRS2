@@ -1,6 +1,6 @@
 # UnrealRS2
 
-An Unreal Engine 5.6.1 project that integrates the [client-377](https://github.com/UnrealRS2/client-377) RuneScape 2 (rev 377) library.  
+An Unreal Engine 5.6.1 project that integrates [client3](https://github.com/lesleyrs/Client3) RuneScape 2 (rev 225).  
 It is built using **MSVC C++17** with **Rider**, but requires **Visual Studio 2022** with the Game Development and Desktop C++ workloads installed.
 
 ## Overview
@@ -28,8 +28,7 @@ It works in two main ways:
     - Game Development with C++
     - Desktop Development with C++
 - **JetBrains Rider** (recommended IDE)
-- **Unreal Engine 5.6.1**
-- [client-377](https://github.com/UnrealRS2/client-377) built and available (DLL + LIB).
+- **Unreal Engine 5.6.1**  
 
 ## Building
 
