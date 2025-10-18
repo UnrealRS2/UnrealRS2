@@ -2,6 +2,7 @@
 
 #include "UnrealRS2.h"
 
+#include "api.h"
 #include "bridge.h"
 #include "Modules/ModuleManager.h"
 #include "Microsoft/AllowMicrosoftPlatformTypes.h"
@@ -10,56 +11,7 @@
 UTexture2D* FUnrealRS2Module::GClientTexture = nullptr;
 int32 FUnrealRS2Module::CurrentDrawColor = 0;
 
-
-
 bool started = false;
-
-static void Unreal_SetColor(int color)
-{
-	FUnrealRS2Module::CurrentDrawColor = color;
-}
-
-static void Unreal_DrawRect(int x, int y, int w, int h)
-{
-	if (!FUnrealRS2Module::GClientTexture)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("DrawRect called before texture initialized!"));
-		return;
-	}
-
-	FTexture2DMipMap& Mip = FUnrealRS2Module::GClientTexture->GetPlatformData()->Mips[0];
-	void* Data = Mip.BulkData.Lock(LOCK_READ_WRITE);
-	uint32* Pixels = static_cast<uint32*>(Data);
-
-	const int TexWidth  = 765;
-	const int TexHeight = 503;
-
-	// Bounds check
-	if (x < 0 || y < 0 || x + w > TexWidth || y + h > TexHeight)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("DrawRect out of bounds: (%d,%d,%d,%d)"), x, y, w, h);
-		Mip.BulkData.Unlock();
-		return;
-	}
-
-	// Draw borders using the client's 0x00RRGGBB format directly
-	const uint32 Color = static_cast<uint32>(FUnrealRS2Module::CurrentDrawColor) | 0xFF000000; // ensure alpha=255
-
-	for (int i = 0; i < w; i++)
-	{
-		Pixels[(y * TexWidth) + (x + i)] = Color;                  // Top
-		Pixels[((y + h - 1) * TexWidth) + (x + i)] = Color;        // Bottom
-	}
-
-	for (int i = 0; i < h; i++)
-	{
-		Pixels[((y + i) * TexWidth) + x] = Color;                  // Left
-		Pixels[((y + i) * TexWidth) + (x + w - 1)] = Color;        // Right
-	}
-
-	Mip.BulkData.Unlock();
-	FUnrealRS2Module::GClientTexture->UpdateResource();
-}
 
 void RegisterUnrealPlatformCallbacks()
 {
@@ -83,12 +35,60 @@ void Unreal_InitTexture()
 	FUnrealRS2Module::GClientTexture->UpdateResource();
 }
 
+void InitDebugScreenCallback()
+{
+	// Set debug print callback for client
+	SetDebugScreenCallback([](const char* Message)
+	{
+		if (!Message) return;
+		// Always forward to game thread
+		AsyncTask(ENamedThreads::GameThread, [msg = FString(Message)]()
+		{
+			if (GEngine && GEngine->GameViewport)
+			{
+				//log
+				UE_LOG(LogTemp, Verbose, TEXT("%s"), *msg);
+				//screen
+				GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Green, msg);
+			}
+		});
+	});
+}
+
+void InitDebugConsoleCallback()
+{
+	// Set debug print callback for client
+	SetDebugConsoleCallback([](const char* Message)
+	{
+		if (!Message) return;
+		// Always forward to game thread
+		AsyncTask(ENamedThreads::GameThread, [msg = FString(Message)]()
+		{
+			if (GEngine && GEngine->GameViewport)
+			{
+				//log
+				UE_LOG(LogTemp, Verbose, TEXT("%s"), *msg);
+				//console message
+				if (APlayerController* PC = GEngine->GetFirstLocalPlayerController(GWorld))
+				{
+					PC->ClientMessage(msg);
+				}
+			}
+		});
+	});
+}
+
+void InitCallbacks()
+{
+	InitDebugScreenCallback();
+	InitDebugConsoleCallback();
+}
+
 	void FUnrealRS2Module::StartupModule()
 	{
 		if (!started)
 		{
-			Unreal_InitTexture();
-			//RegisterUnrealPlatformCallbacks();
+			InitCallbacks();
 			started = true;
 		}
 		
@@ -106,13 +106,13 @@ void Unreal_InitTexture()
 				APlayerController* PC = World->GetFirstPlayerController();
 				if (PC && PC->GetHUD())
 				{
-					GEngine->AddOnScreenDebugMessage(-1,  120.f, FColor::Green, FString("Starting RS2"));
 					rs2_start_client();
-					GEngine->AddOnScreenDebugMessage(-1,  120.f, FColor::Green, FString("RS2 Loaded"));
 				}
 			});
 		});
 	}
+
+
 
 	void FUnrealRS2Module::ShutdownModule()
 	{

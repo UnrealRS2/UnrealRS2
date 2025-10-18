@@ -4,6 +4,8 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+#include "api.h"
 #if defined(_arch_dreamcast) || defined(__NDS__)
 #include <malloc.h>
 #endif
@@ -54,6 +56,7 @@
 #include "../wordenc/wordpack.h"
 #include "../world.h"
 #include "../world3d.h"
+
 
 extern int DESIGN_BODY_COLOR_LENGTH[];
 extern int *DESIGN_BODY_COLOR[];
@@ -183,12 +186,12 @@ void client_load(Client *c) {
 #else
         // TODO: hardcoded for now add openurl
         c->archive_checksum[0] = 0;
-        c->archive_checksum[1] = -430779560;
+        c->archive_checksum[1] = 784449929;
         c->archive_checksum[2] = -1494598746;
-        c->archive_checksum[3] = 251806152;
-        c->archive_checksum[4] = -343404987;
+        c->archive_checksum[3] = 1614084464;
+        c->archive_checksum[4] = 292972807;
         c->archive_checksum[5] = -2000991154;
-        c->archive_checksum[6] = 1703545114;
+        c->archive_checksum[6] = -313801935;
         c->archive_checksum[7] = 1570981179;
         c->archive_checksum[8] = -1532605973;
 #endif
@@ -7148,6 +7151,7 @@ void getNpcPosOldVis(Client *c, Packet *buf, int size) {
 }
 
 void client_add_message(Client *c, int type, const char *text, const char *sender) {
+    DebugConsole(text);
     if (type == 0 && c->sticky_chat_interface_id != -1) {
         strcpy(c->modal_message, text);
         c->shell->mouse_click_button = 0;
@@ -10922,6 +10926,7 @@ void client_load_title(Client *c) {
 }
 
 void client_draw_progress(Client *c, const char *message, int progress) {
+    DebugConsole(message);
     client_load_title(c);
     if (!c->archive_title) {
         gameshell_draw_progress(c->shell, message, progress);
