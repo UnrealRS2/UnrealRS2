@@ -38,9 +38,9 @@ static double g_Msec;              // current playback time
 static tml_message *g_MidiMessage; // next message to be played
 
 static SDL_Window *window;
-static SDL_Surface *window_surface;
+SDL_Surface *window_surface = NULL;
 static SDL_Texture *texture;
-static SDL_Renderer *renderer;
+SDL_Renderer *renderer = NULL;
 
 static void platform_get_keycodes(SDL_Keysym *keysym, int *code, char *ch);
 
@@ -127,7 +127,10 @@ static void midi_callback(void *data, uint8_t *stream, int len) {
 }
 
 bool platform_init(void) {
+    SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
     SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
+    SDL_SetHint(SDL_HINT_VIDEO_HIGHDPI_DISABLED, "1");
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
     if (_Custom.resizable) {
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1"); // Linear scaling
     }
@@ -153,13 +156,20 @@ bool platform_init(void) {
     return true;
 }
 
+void get_pixels()
+{
+    Uint32* pixels = window_surface->pixels;
+    int pitch = window_surface->pitch; // bytes per row
+}
+
 void platform_new(GameShell *shell) {
 #ifdef __vita__
     SDL_JoystickEventState(SDL_ENABLE);
     joystick = SDL_JoystickOpen(0);
 #endif
 
-    int window_flags = SDL_WINDOW_SHOWN;
+    // TODO: set SDL_WINDOW_HIDDEN when Unreal can handle framebuffer/input!
+    int window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS;
     if (_Custom.resizable) {
         window_flags |= SDL_WINDOW_RESIZABLE;
     }
@@ -210,6 +220,7 @@ void platform_new(GameShell *shell) {
             }
             rs2_log("SDL2: software renderer in use\n");
         }
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
         SDL_RendererInfo active_info = {0};
         SDL_GetRendererInfo(renderer, &active_info);
 
@@ -227,7 +238,13 @@ void platform_new(GameShell *shell) {
         }
         rs2_log("SDL2: available renderers: [%s]\n", renderers);
 
-        texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, shell->screen_width, shell->screen_height);
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+        // Clear to transparent
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+        SDL_RenderClear(renderer);
+        
+        texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, shell->screen_width, shell->screen_height);
         if (!texture) {
             rs2_error("SDL2: texture creation failed: %s\n", SDL_GetError());
             SDL_DestroyWindow(window);
@@ -237,6 +254,8 @@ void platform_new(GameShell *shell) {
 
         SDL_RenderSetLogicalSize(renderer, SCREEN_WIDTH, SCREEN_HEIGHT);
     }
+
+    SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
 
     if (_Client.lowmem) {
         return;

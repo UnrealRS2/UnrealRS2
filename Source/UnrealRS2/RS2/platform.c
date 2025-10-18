@@ -12,6 +12,8 @@
 #include "defines.h"
 #include "platform.h"
 
+#include "api.h"
+
 #if SDL == 3
 #include "SDL3/SDL.h"
 #endif
@@ -267,7 +269,10 @@ void platform_free_surface(Surface *surface) {
 void rs2_log(const char *format, ...) {
     va_list args;
     va_start(args, format);
-
+    int len = vsnprintf(NULL, 0, format, args);
+    char *result = malloc(len + 1);
+    vsnprintf(result, len + 1, format, args);
+    DebugConsole(result);
 #if SDL > 1
     SDL_LogMessageV(SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_INFO, format,
                     args);

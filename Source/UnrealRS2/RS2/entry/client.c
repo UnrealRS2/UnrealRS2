@@ -4,6 +4,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "sdl2.h"
 
 #include "api.h"
 #if defined(_arch_dreamcast) || defined(__NDS__)
@@ -7779,7 +7780,19 @@ void client_draw(Client *c) {
         } else {
             client_draw_title_screen(c);
         }
-
+        int w = window_surface->w;
+        int h = window_surface->h;
+        uint32_t* buffer = malloc(sizeof(uint32_t) * w * h);
+        /*// Read the GPU framebuffer into buffer
+        if (SDL_RenderReadPixels(renderer, NULL, SDL_PIXELFORMAT_ABGR8888, buffer, w * sizeof(uint32_t)) != 0)
+        {
+            rs2_error("SDL_RenderReadPixels failed: %s\n", SDL_GetError());
+            free(buffer);
+            return;
+        }
+        if (window_surface)
+            if (buffer)
+                DrawFinished(buffer, w, h);*/
         c->drag_cycles = 0;
     }
 }

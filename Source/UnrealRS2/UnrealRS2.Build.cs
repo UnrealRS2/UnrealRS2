@@ -11,9 +11,10 @@ public class UnrealRS2 : ModuleRules
 	
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput" });
 
-		PrivateDependencyModuleNames.AddRange(new string[] {  });
+		PrivateDependencyModuleNames.AddRange(new string[] { "UMG" });
 		
-		var ThirdPartyPath = Path.Combine(ModuleDirectory, "../../ThirdParty/");
+
+		//RS2
 		var Rs2Path = Path.Combine(ModuleDirectory, "./RS2");
 		PublicIncludePaths.Add(Rs2Path);
 		PublicIncludePaths.Add(Path.Combine(Rs2Path, "datastruct"));
@@ -22,8 +23,14 @@ public class UnrealRS2 : ModuleRules
 		PublicIncludePaths.Add(Path.Combine(Rs2Path, "sound"));
 		PublicIncludePaths.Add(Path.Combine(Rs2Path, "thirdparty"));
 		PublicIncludePaths.Add(Path.Combine(Rs2Path, "wordenc"));
-		PublicIncludePaths.Add(Path.Combine(ThirdPartyPath, "SDL2-2.30.9/include"));
-		PublicAdditionalLibraries.Add(Path.Combine(ThirdPartyPath, "SDL2-2.30.9/lib/x64/SDL2.lib"));
+		
+		var ThirdPartyPath = Path.Combine(ModuleDirectory, "../../ThirdParty/");
+		
+		//SDL 2
+		var SDL2Path = Path.Combine(ThirdPartyPath, "SDL2-2.30.9");
+		
+		PublicIncludePaths.Add(Path.Combine(SDL2Path, "include"));
+		PublicAdditionalLibraries.Add(Path.Combine(SDL2Path, "lib/x64/SDL2.lib"));
 		PublicDelayLoadDLLs.Add("SDL2.dll"); // load at runtime
 		RuntimeDependencies.Add("$(BinaryOutputDir)/SDL2.dll"); // make sure it’s packaged
 

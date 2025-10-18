@@ -17,7 +17,7 @@ extern InputTracking _InputTracking;
 #if defined(__WII__) || defined(__3DS__) || defined(__WIIU__) || defined(__SWITCH__) || defined(__PSP__) || defined(__vita__) || defined(_arch_dreamcast) || defined(NXDK) || defined(__NDS__) || defined(ANDROID)
 Custom _Custom = {.chat_era = 2, .http_port = 80, .showPerformance = true};
 #else
-Custom _Custom = {.chat_era = 2, .http_port = 80};
+Custom _Custom = {.chat_era = 2, .http_port = 80, .resizable = true};
 #endif
 
 // NOTE: having this file separate from client easily creates conflicts if other non-client entrypoints compile all c files
