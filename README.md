@@ -3,6 +3,8 @@
 An Unreal Engine 5.6.1 project that integrates [client3](https://github.com/lesleyrs/Client3) RuneScape 2 (rev 225).  
 It is built using **MSVC C++17** with **Rider**, but requires **Visual Studio 2022** with the Game Development and Desktop C++ workloads installed.
 
+  <img width="1866" height="1025" alt="image" src="https://github.com/user-attachments/assets/afac4162-ad9e-4971-af6b-532efa51465a" />  
+  
 ## Overview
 
 UnrealRS2 acts as the presentation layer for the legacy RuneScape 2 client.  
