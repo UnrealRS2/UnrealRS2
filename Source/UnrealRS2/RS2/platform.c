@@ -51,7 +51,7 @@ void platform_set_color(int color) {
 }
 void platform_draw_rect(int x, int y, int w, int h) {
     int *pixels = calloc(w * h, sizeof(int));
-    Surface *rect = platform_create_surface(pixels, w, h, false);
+    Surface *rect = platform_create_surface(pixels, w, h, 0x000000ff);
 
     for (int i = 0; i < w; i++) {
         pixels[i] = draw_color;                 // top
@@ -70,7 +70,7 @@ void platform_draw_rect(int x, int y, int w, int h) {
 
 void platform_fill_rect(int x, int y, int w, int h) {
     int *pixels = calloc(w * h, sizeof(int));
-    Surface *rect = platform_create_surface(pixels, w, h, false);
+    Surface *rect = platform_create_surface(pixels, w, h, 0x000000ff);
 
     for (int j = 0; j < h; j++) {
         int *row = pixels + j * w;
@@ -196,7 +196,7 @@ void platform_draw_string(const char *str, int x, int y) {
     int width = platform_string_width(str);
     int height = (ascent - descent) * scale;
     int *pixels = calloc(width * height, sizeof(int));
-    Surface *surface = platform_create_surface(pixels, width, height, 0xff000000);
+    Surface *surface = platform_create_surface(pixels, width, height, 0x000000ff);
 
     int r = (draw_color >> 16) & 0xff;
     int g = (draw_color >> 8) & 0xff;
@@ -245,7 +245,7 @@ Surface *platform_create_surface(int *pixels, int width, int height, int alpha) 
 #if SDL == 3
     return SDL_CreateSurfaceFrom(width, height, SDL_GetPixelFormatForMasks(32, 0xff0000, 0x00ff00, 0x0000ff, alpha), pixels, width * sizeof(int));
 #elif SDL == 2 || SDL == 1
-    return SDL_CreateRGBSurfaceFrom(pixels, width, height, 32, width * sizeof(int), 0xff0000, 0x00ff00, 0x0000ff, alpha);
+    return SDL_CreateRGBSurfaceFrom(pixels, width, height, 32, width * sizeof(int), 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
 #else
     (void)alpha;
     Surface *surface = calloc(1, sizeof(Surface));

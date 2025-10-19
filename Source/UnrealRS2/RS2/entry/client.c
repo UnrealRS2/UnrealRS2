@@ -7780,19 +7780,58 @@ void client_draw(Client *c) {
         } else {
             client_draw_title_screen(c);
         }
-        int w = window_surface->w;
-        int h = window_surface->h;
-        uint32_t* buffer = malloc(sizeof(uint32_t) * w * h);
-        /*// Read the GPU framebuffer into buffer
-        if (SDL_RenderReadPixels(renderer, NULL, SDL_PIXELFORMAT_ABGR8888, buffer, w * sizeof(uint32_t)) != 0)
+
+
+        /*SDL_Surface *surf = window_surface; // your created surface
+        if (!surf) return;
+
+        int w, h;
+        SDL_GetRendererOutputSize(renderer, &w, &h);
+        int srcPitch = surf->pitch;
+        int dstPitch = w * 4;
+        uint8_t *dst = malloc(h * dstPitch);
+        if (!dst) return;
+
+        SDL_LockSurface(surf);
+
+        for (int y = 0; y < h; ++y) {
+            uint8_t *srcRow = (uint8_t*)surf->pixels + y * srcPitch;
+            uint8_t *dstRow = dst + y * dstPitch;
+            for (int x = 0; x < w; ++x) {
+                Uint32 srcPixel = 0;
+                memcpy(&srcPixel, srcRow + x * 32, 32);
+
+                Uint8 r, g, b, a;
+                SDL_GetRGBA(srcPixel, surf->format, &r, &g, &b, &a);
+
+                // Build BGRA8888 for Unreal (B G R A). Force alpha = 255 if you want opaque:
+                dstRow[x * 4 + 0] = b;
+                dstRow[x * 4 + 1] = b;
+                dstRow[x * 4 + 2] = r;
+                dstRow[x * 4 + 3] = 255; // or a if your surf had alpha
+            }
+        }
+        SDL_UnlockSurface(surf);
+        
+        if (surf)
+            if (dst)
+                DrawFinished((uint32_t*) dst, w, h);*/
+        // Read the GPU framebuffer into buffer
+        int w, h;
+        SDL_GetRendererOutputSize(renderer, &w, &h);
+        int pitch = w * 4;
+        uint32_t *buffer = malloc(h * pitch);
+        
+        if (SDL_RenderReadPixels(renderer, NULL, SDL_PIXELFORMAT_ARGB8888, buffer, w * sizeof(uint32_t)) != 0)
         {
             rs2_error("SDL_RenderReadPixels failed: %s\n", SDL_GetError());
             free(buffer);
             return;
         }
+
         if (window_surface)
             if (buffer)
-                DrawFinished(buffer, w, h);*/
+                DrawFinished(buffer, w, h);
         c->drag_cycles = 0;
     }
 }

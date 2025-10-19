@@ -5,8 +5,8 @@
 #include "api.h"
 #include "bridge.h"
 #include "Blueprint/UserWidget.h"
-#include "Components/CanvasPanel.h"
 #include "Components/Image.h"
+#include "Components/SizeBox.h"
 #include "Modules/ModuleManager.h"
 #include "Microsoft/AllowMicrosoftPlatformTypes.h"
 
@@ -66,9 +66,43 @@ struct DrawFinishedX
 	{}
 };
 
-static UTexture2D* GDrawTexture = nullptr;
+UTexture2D* GDrawTexture = nullptr;
 
 UImage* GFrameBufferImage = nullptr;
+USizeBox* GFrameBufferSizeBox = nullptr;
+float targetHeight, targetWidth;
+
+// Call this once at setup
+UTexture2D* CreateFrameBufferTexture(int32 Width, int32 Height)
+{
+	UTexture2D* Tex = UTexture2D::CreateTransient(Width, Height, PF_B8G8R8A8);
+	Tex->SRGB = true;
+	Tex->NeverStream = true;
+
+	// Force the RHI resource to be created immediately
+	Tex->AddToRoot(); // optional, prevent GC
+	Tex->UpdateResource();
+
+	return Tex;
+}
+
+void UpdateFrameBufferTexture(UTexture2D* Texture, uint8* Pixels, int32 Width, int32 Height)
+{
+	if (!Texture || !Pixels)
+		return;
+
+	FUpdateTextureRegion2D Region(0, 0, 0, 0, Width, Height);
+
+	// Unreal’s safe, async-friendly helper
+	Texture->UpdateTextureRegions(
+		0,        // mip index
+		1,        // number of regions
+		&Region,  // region(s)
+		Width * 4, // source pitch (bytes per row)
+		4,        // bytes per pixel
+		Pixels    // source data
+	);
+}
 
 void InitDrawFinishedCallback()
 {
@@ -81,11 +115,27 @@ void InitDrawFinishedCallback()
 				GDrawTexture->GetSizeX() != msg.w ||
 				GDrawTexture->GetSizeY() != msg.h)
 			{
-				GDrawTexture = UTexture2D::CreateTransient(msg.w, msg.h, PF_B8G8R8A8);
-				GDrawTexture->AddToRoot(); // prevent GC
-				GDrawTexture->SRGB = false;
+				GDrawTexture = CreateFrameBufferTexture(msg.w, msg.h);
+
+				FVector2D Size;
+				GEngine->GameViewport->GetViewportSize(Size);
+
+				float widthRatio = Size.X / msg.w;
+				float heightRatio = Size.Y / msg.h;
+
+
+				if (widthRatio > heightRatio)
+				{
+					targetWidth = msg.w * widthRatio;
+					targetHeight = msg.h * widthRatio;
+				}
+				else
+				{
+					targetWidth = msg.w * heightRatio;
+					targetHeight = msg.h * heightRatio;
+				}
 			}
-			
+			// TODO: UpdateFrameBufferTexture(GDrawTexture, msg.pixels, msg.w, msg.h);
 			// Update texture pixels
 			FTexture2DMipMap& Mip = GDrawTexture->GetPlatformData()->Mips[0];
 			void* Data = Mip.BulkData.Lock(LOCK_READ_WRITE);
@@ -96,13 +146,43 @@ void InitDrawFinishedCallback()
 			// Update UMG Image brush
 			if (GFrameBufferImage && GDrawTexture)
 			{
+				GFrameBufferImage->SetDesiredSizeOverride(FVector2D(targetWidth, targetHeight));
 				FSlateBrush Brush;
 				Brush.SetResourceObject(GDrawTexture);
 				Brush.ImageSize = FVector2D(msg.w, msg.h);
+				Brush.Tiling = ESlateBrushTileType::NoTile;
 				GFrameBufferImage->SetBrush(Brush);
+				GFrameBufferImage->SetColorAndOpacity(FLinearColor::White);
 			}
 		});
 	});
+}
+
+void UpdateTexture(UTexture2D* Texture, const uint8* SrcData, int32 SrcPitch)
+{
+	if (!Texture || !SrcData) return;
+
+	const int32 Width  = Texture->GetSizeX();
+	const int32 Height = Texture->GetSizeY();
+
+	FUpdateTextureRegion2D Region(0, 0, 0, 0, Width, Height);
+
+	auto Data = MakeShared<TArray<uint8>, ESPMode::ThreadSafe>();
+	Data->SetNumUninitialized(Width * Height * 4);
+	FMemory::Memcpy(Data->GetData(), SrcData, Width * Height * 4);
+
+	ENQUEUE_RENDER_COMMAND(UpdateTextureRegion)(
+		[Texture, Region, Data](FRHICommandListImmediate& RHICmdList)
+		{
+			RHIUpdateTexture2D(
+				Texture->GetResource()->GetTexture2DRHI(),
+				0,
+				Region,
+				Texture->GetSizeX() * 4,
+				Data->GetData()
+			);
+		}
+	);
 }
 
 void InitCallbacks()
@@ -129,6 +209,8 @@ void InitCallbacks()
 		}
 		
 		Widget->AddToViewport();
+		
+		GFrameBufferSizeBox = Cast<USizeBox>(Widget->GetWidgetFromName(TEXT("FrameBufferSizeBox")));
 		
 		// Grab the Image widget manually
 		GFrameBufferImage = Cast<UImage>(Widget->GetWidgetFromName(TEXT("FrameBufferImage")));

@@ -37,7 +37,7 @@ static tsf *g_TinySoundFont;
 static double g_Msec;              // current playback time
 static tml_message *g_MidiMessage; // next message to be played
 
-static SDL_Window *window;
+SDL_Window *window;
 SDL_Surface *window_surface = NULL;
 static SDL_Texture *texture;
 SDL_Renderer *renderer = NULL;
@@ -169,8 +169,8 @@ void platform_new(GameShell *shell) {
 #endif
 
     // TODO: set SDL_WINDOW_HIDDEN when Unreal can handle framebuffer/input!
-    int window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS;
-    if (_Custom.resizable) {
+    int window_flags = SDL_WINDOW_SHOWN;
+    if (false) {
         window_flags |= SDL_WINDOW_RESIZABLE;
     }
     window = SDL_CreateWindow("Jagex", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_FB_WIDTH, SCREEN_FB_HEIGHT, window_flags);
@@ -193,7 +193,7 @@ void platform_new(GameShell *shell) {
             return;
         }
     } else {
-        window_surface = SDL_CreateRGBSurface(0, shell->screen_width, shell->screen_height, 32, 0xff0000, 0x00ff00, 0x0000ff, 0);
+        window_surface = SDL_CreateRGBSurface(0, shell->screen_width, shell->screen_height, 32, 0x0000ff00, 0x00ff0000, 0xff000000, 0x000000ff);
         if (!window_surface) {
             rs2_error("SDL2: surface creation failed: %s\n", SDL_GetError());
             SDL_DestroyWindow(window);
@@ -209,8 +209,8 @@ void platform_new(GameShell *shell) {
             return;
         }
 
-        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-        if (!renderer) {
+        /*renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+        if (!renderer) {*/
             renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
             if (!renderer) {
                 rs2_error("SDL2: renderer creation failed: %s\n", SDL_GetError());
@@ -218,8 +218,8 @@ void platform_new(GameShell *shell) {
                 SDL_Quit();
                 return;
             }
-            rs2_log("SDL2: software renderer in use\n");
-        }
+            /*rs2_log("SDL2: software renderer in use\n");
+        }*/
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
         SDL_RendererInfo active_info = {0};
         SDL_GetRendererInfo(renderer, &active_info);
@@ -255,7 +255,7 @@ void platform_new(GameShell *shell) {
         SDL_RenderSetLogicalSize(renderer, SCREEN_WIDTH, SCREEN_HEIGHT);
     }
 
-    SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+    //SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
 
     if (_Client.lowmem) {
         return;
@@ -888,7 +888,7 @@ void platform_poll_events(Client *c) {
                         return;
                     }
                 } else {
-                    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0xff);
+                    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
                     SDL_RenderClear(renderer);
                 }
                 c->redraw_background = true;
