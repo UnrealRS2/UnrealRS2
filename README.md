@@ -1,7 +1,7 @@
 ﻿# URRL — Unreal RuneLite Frontend (WIP)
 
 URRL is a work-in-progress Unreal Engine 5.6.1 frontend for RuneLite.  
-It communicates through a shared memory region to sync data in real time.
+It communicates through a shared memory region to sync data in real time.  
 see: https://github.com/UnrealRS2/rl-gpushared-shim
 
 ![0pmStEXGDZ](https://github.com/user-attachments/assets/f5880cc6-eb47-4150-a84c-96ab184da0af)
