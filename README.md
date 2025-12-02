@@ -34,4 +34,6 @@ Cook the content using Unreal
 
 ## Running
 You must run via PIE (Play in Editor - Buggy) or via packaged build, it will not run correctly inside Rider  
-Using this would require a runelite plugin such as the one bundled in https://github.com/UnrealRS2/rl-gpushared-shim
+Using this would require a runelite plugin such as the one bundled in https://github.com/UnrealRS2/rl-gpushared-shim  
+You must also have the rl-gpushared-shim .dll on your PATH (or drop it in jvm/bin dir if you are lazy)
+
