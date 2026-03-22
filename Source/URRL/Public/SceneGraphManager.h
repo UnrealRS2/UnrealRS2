@@ -65,7 +65,16 @@ private:
     void ProcessZoneData(const struct FZonePacket& Packet);
     void ProcessSceneClear();
     void ProcessZoneClear(int32 ZoneX, int32 ZoneZ);
+    void ProcessEntityBatch(const struct FZonePacket& Packet);
 
+    /** Zone geometry: 5 ints/vertex, packed 16-bit integer local positions. */
     static FProcMeshSection BuildSection(const int32_t* Data, int32 IntCount);
+    /** Entity geometry: 6 ints/vertex, float world-space positions (putfff4 + put2222). */
+    static FProcMeshSection BuildEntitySection(const int32_t* Data, int32 IntCount);
+
     static int64 ZoneKey(int32 X, int32 Z) { return (static_cast<int64>(X) << 32) | static_cast<uint32>(Z); }
+
+    /** Single mesh rebuilt every frame from the entity batch. */
+    UPROPERTY()
+    TObjectPtr<UProceduralMeshComponent> EntityMesh;
 };

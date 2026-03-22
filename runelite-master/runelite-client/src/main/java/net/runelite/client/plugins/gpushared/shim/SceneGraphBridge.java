@@ -37,9 +37,10 @@ import java.nio.IntBuffer;
  */
 public class SceneGraphBridge
 {
-	public static final int CMD_ZONE_DATA   = 1;
-	public static final int CMD_ZONE_CLEAR  = 2;
-	public static final int CMD_SCENE_CLEAR = 3;
+	public static final int CMD_ZONE_DATA    = 1;
+	public static final int CMD_ZONE_CLEAR   = 2;
+	public static final int CMD_SCENE_CLEAR  = 3;
+	public static final int CMD_ENTITY_BATCH = 4;
 
 	// Header offsets
 	private static final int OFF_WRITE_HEAD       = 0;
@@ -186,6 +187,40 @@ public class SceneGraphBridge
 		buf.put(base + SLOT_OFF_COMMAND, (byte) CMD_ZONE_CLEAR);
 		buf.putInt(base + SLOT_OFF_ZONE_X, mzx);
 		buf.putInt(base + SLOT_OFF_ZONE_Z, mzz);
+		commitSlot();
+	}
+
+	/**
+	 * Send a full-frame entity geometry batch to UE.
+	 * Vertex format: 6 ints per vertex (putfff4 + put2222):
+	 *   [0] floatBits(worldX)   [1] floatBits(worldY/height)  [2] floatBits(worldZ)
+	 *   [3] abhsl               [4] (su<<16)|texture           [5] (tf<<16)|sv
+	 * intCount must be a multiple of 6 (one set of 6 per vertex, 3 verts per triangle).
+	 */
+	public void sendEntityBatch(int[] data, int intCount)
+	{
+		if (buf == null)
+		{
+			return;
+		}
+		waitForSpace();
+
+		int base    = slotBase(localWriteHead);
+		int maxInts = Math.min(intCount, MAX_SLOT_DATA_INTS);
+
+		buf.put(base + SLOT_OFF_COMMAND, (byte) CMD_ENTITY_BATCH);
+		buf.putInt(base + SLOT_OFF_ZONE_X, 0);
+		buf.putInt(base + SLOT_OFF_ZONE_Z, 0);
+		buf.putInt(base + SLOT_OFF_OPAQUE_COUNT, maxInts);
+		buf.putInt(base + SLOT_OFF_ALPHA_COUNT,  0);
+
+		if (maxInts > 0)
+		{
+			ByteBuffer slice = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+			slice.position(base + SLOT_OFF_DATA);
+			slice.asIntBuffer().put(data, 0, maxInts);
+		}
+
 		commitSlot();
 	}
 }

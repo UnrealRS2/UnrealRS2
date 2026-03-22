@@ -39,6 +39,7 @@ static void InitOnWorld(UWorld* World)
 
 	FSharedMemoryBridge::SharedMemoryBridge.Init("URRL");
 	FSceneGraphBridge::Instance.Init("URRL_Scene");
+	FEntityBridge::Instance.Init("URRL_Entities");
 	FTextureBridge::Instance.Init("URRL_Textures");
 
 	// Spawn the actor that polls zone packets and builds meshes
@@ -82,6 +83,7 @@ void FURRLModule::StartupModule()
 		if (World->IsGameWorld() && FSceneGraphBridge::Instance.IsInitialized())
 		{
 			FSceneGraphBridge::Instance.Shutdown();
+			FEntityBridge::Instance.Shutdown();
 			FTextureBridge::Instance.Shutdown();
 			UE_LOG(LogTemp, Log, TEXT("URRL: bridges shut down on world cleanup"));
 		}
@@ -106,6 +108,7 @@ void FURRLModule::StartupModule()
 void FURRLModule::ShutdownModule()
 {
 	FSceneGraphBridge::Instance.Shutdown();
+	FEntityBridge::Instance.Shutdown();
 	FTextureBridge::Instance.Shutdown();
 }
 

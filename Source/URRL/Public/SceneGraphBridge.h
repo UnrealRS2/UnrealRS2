@@ -45,6 +45,25 @@ static constexpr uint32_t SCENE_SLOT_COUNT  = 256;
 static constexpr uint32_t SCENE_SLOT_BYTES  = 2 * 1024 * 1024;  // 2 MB per slot
 static constexpr DWORD    SCENE_SHM_SIZE    = 16 + SCENE_SLOT_COUNT * SCENE_SLOT_BYTES; // ~512 MB
 
+// ── Entity batch shared memory ("URRL_Entities") ─────────────────────────────
+// Separate from the zone ring — entities need up to 256 MB per frame.
+//
+// Layout:
+//   [0]  write_seq  (uint32) — Java increments after writing a batch
+//   [4]  read_seq   (uint32) — UE increments after consuming a batch
+//   [8]  int_count  (uint32) — number of int32s of entity data
+//   [12] pad[4]
+//   [16] data[]              — entity geometry (int32 array, 6 ints/vertex)
+//
+// Protocol:
+//   Java: write data[], set int_count, releaseFence(), ++write_seq
+//   UE:   acquire-load write_seq; if != read_seq: read int_count ints, ++read_seq
+static constexpr DWORD  ENTITY_SHM_SIZE     = 16 + 256 * 1024 * 1024;  // 256 MB data
+static constexpr int    ENTITY_OFF_WRITE_SEQ = 0;
+static constexpr int    ENTITY_OFF_READ_SEQ  = 4;
+static constexpr int    ENTITY_OFF_INT_COUNT = 8;
+static constexpr int    ENTITY_DATA_BASE     = 16;
+
 // Header offsets
 static constexpr int SCENE_OFF_WRITE_HEAD   = 0;   // uint32 (Java writes)
 static constexpr int SCENE_OFF_READ_HEAD    = 4;   // uint32 (UE writes)
@@ -58,9 +77,10 @@ static constexpr int SLOT_OFF_OPAQUE_COUNT  = 12;
 static constexpr int SLOT_OFF_ALPHA_COUNT   = 16;
 static constexpr int SLOT_OFF_DATA          = 20;
 
-static constexpr uint8_t SCENE_CMD_ZONE_DATA   = 1;
-static constexpr uint8_t SCENE_CMD_ZONE_CLEAR  = 2;
-static constexpr uint8_t SCENE_CMD_SCENE_CLEAR = 3;
+static constexpr uint8_t SCENE_CMD_ZONE_DATA    = 1;
+static constexpr uint8_t SCENE_CMD_ZONE_CLEAR   = 2;
+static constexpr uint8_t SCENE_CMD_SCENE_CLEAR  = 3;
+static constexpr uint8_t SCENE_CMD_ENTITY_BATCH = 4;
 
 // RuneLite OSRS coordinate scale: 1 tile = 128 RS units in X/Z.
 // Unreal units: 1 UE unit = 1 cm. OSRS tile = ~0.9m → ~90 UE units/tile.
@@ -99,4 +119,25 @@ public:
 private:
     HANDLE   hMapFile = nullptr;
     uint8*   Base     = nullptr;
+};
+
+/** Dedicated shared memory for per-frame entity geometry batches.
+ *  Simple single-slot producer/consumer — no ring needed, one batch per frame. */
+class FEntityBridge
+{
+public:
+    bool Init(const char* Name);
+    void Shutdown();
+
+    /** Call from game thread each tick. Returns true + fills OutData/OutIntCount
+     *  when a new entity batch is available. Advances read_seq so Java can write next frame. */
+    bool Poll(const int32*& OutData, int32& OutIntCount);
+    bool IsInitialized() const { return Base != nullptr; }
+
+    static FEntityBridge Instance;
+
+private:
+    HANDLE   hMapFile = nullptr;
+    uint8*   Base     = nullptr;
+    uint32   LocalReadSeq = 0;
 };

@@ -65,7 +65,7 @@ public class GpuIntBuffer
 		return buffer;
 	}
 
-	static IntBuffer allocateDirect(int size)
+	public static IntBuffer allocateDirect(int size)
 	{
 		return ByteBuffer.allocateDirect(size * Integer.BYTES)
 			.order(ByteOrder.nativeOrder())

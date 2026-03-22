@@ -76,6 +76,7 @@ import net.runelite.client.plugins.gpu.config.AntiAliasingMode;
 import net.runelite.client.plugins.gpu.config.UIScalingMode;
 import net.runelite.client.plugins.gpu.template.Template;
 import net.runelite.client.plugins.gpu.vao.VAOList;
+import net.runelite.client.plugins.gpushared.shim.EntityBridge;
 import net.runelite.client.plugins.gpushared.shim.SceneGraphBridge;
 import net.runelite.client.plugins.gpushared.shim.SharedMemoryBridge;
 import net.runelite.client.plugins.gpushared.shim.TextureBridge;
@@ -286,6 +287,7 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
         System.loadLibrary("rl_gpushared_shim");
         bridge.init("URRL");
         sceneBridge.init("URRL_Scene");
+        entityBridge.init("URRL_Entities");
         root = new SceneContext(NUM_ZONES, NUM_ZONES);
         subs = new SceneContext[MAX_WORLDVIEWS];
         clientUploader = new SceneUploader(renderCallbackManager);
@@ -514,6 +516,7 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
             client.resizeCanvas();
         });
         sceneBridge.shutdown();
+        entityBridge.shutdown();
         textureBridge.shutdown();
     }
 
@@ -1215,9 +1218,28 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
                     zone.removeTemp();
                 }
             }
+
+            // End of frame — flush accumulated entity geometry to UE
+            if (scene.getWorldViewId() == -1)
+            {
+                flushEntityBatch();
+            }
         }
 
         checkGLErrors();
+    }
+
+    private void flushEntityBatch()
+    {
+        int count = entityBatchBuffer.position();
+        entityBatchBuffer.flip();
+        int[] data = count > 0 ? new int[count] : new int[0];
+        if (count > 0)
+        {
+            entityBatchBuffer.get(data);
+        }
+        entityBridge.sendEntityBatch(data, count);
+        entityBatchBuffer.clear();
     }
 
     @Override
@@ -1288,6 +1310,8 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
         Renderable renderable = gameObject.getRenderable();
         int size = m.getFaceCount() * 3 * VAO.VERT_SIZE;
         int renderMode = renderable.getRenderMode();
+        // Always capture for UE entity batch using the simple (non-sorted) uploader
+        clientUploader.uploadTempModel(m, orient, x, y, z, entityBatchBuffer);
         if (renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH || m.getFaceTransparencies() != null)
         {
             // opaque player faces have their own vao and are drawn in a separate pass from normal opaque faces
@@ -1322,7 +1346,23 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
         {
             VAO o = vaoO.get(size);
             clientUploader.uploadTempModel(m, orient, x, y, z, o.vbo.vb);
+            // entity batch already written above
         }
+    }
+
+    @Override
+    public void draw(Projection projection, Scene scene, Renderable renderable, int orientation, int x, int y, int z, long hash)
+    {
+        if (scene.getWorldViewId() != -1)
+        {
+            return;
+        }
+        Model m = renderable instanceof Model ? (Model) renderable : renderable.getModel();
+        if (m == null)
+        {
+            return;
+        }
+        clientUploader.uploadTempModel(m, orientation, x, y, z, entityBatchBuffer);
     }
 
     @Override
@@ -1560,6 +1600,7 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
 
     SharedMemoryBridge bridge = new SharedMemoryBridge();
     SceneGraphBridge sceneBridge = new SceneGraphBridge();
+    EntityBridge entityBridge = new EntityBridge();
     TextureBridge textureBridge = new TextureBridge();
 
     // Cache of zone data sent to UE, keyed by (mzx << 32 | mzz).
@@ -1572,6 +1613,10 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
     {
         return ((long) mzx << 32) | (mzz & 0xFFFFFFFFL);
     }
+
+    // Per-frame entity geometry accumulation buffer (6 ints per vertex, putfff4 + put2222).
+    // Flushed to UE as a single ENTITY_BATCH packet at the end of PASS_ALPHA.
+    private java.nio.IntBuffer entityBatchBuffer = GpuIntBuffer.allocateDirect(64 * 1024 * 1024); // 64M ints / 256MB — large NPCs, bosses, crowded scenes
 
     @Override
     public void draw(int overlayColor)
@@ -2190,6 +2235,7 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
         }
 
         SceneContext ctx = root;
+        if (ctx.zones != null)
         for (int x = 0; x < ctx.sizeX; ++x)
         {
             for (int z = 0; z < ctx.sizeZ; ++z)
@@ -2209,6 +2255,10 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
         }
         nextRoofChanges = null;
 
+        if (nextZones == null)
+        {
+            return;
+        }
         ctx.zones = nextZones;
         nextZones = null;
 

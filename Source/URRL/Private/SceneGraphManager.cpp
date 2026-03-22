@@ -92,6 +92,25 @@ void ASceneGraphManager::Tick(float DeltaSeconds)
             break;
         }
     }
+
+    // Poll dedicated entity batch SHM (separate from zone ring — no size limit issues)
+    {
+        const int32* EntityData  = nullptr;
+        int32        EntityCount = 0;
+        if (FEntityBridge::Instance.Poll(EntityData, EntityCount))
+        {
+            FZonePacket EntityPacket;
+            EntityPacket.Command        = SCENE_CMD_ENTITY_BATCH;
+            EntityPacket.OpaqueIntCount = EntityCount;
+            EntityPacket.AlphaIntCount  = 0;
+            if (EntityCount > 0)
+            {
+                EntityPacket.Data.SetNumUninitialized(EntityCount);
+                FMemory::Memcpy(EntityPacket.Data.GetData(), EntityData, EntityCount * sizeof(int32));
+            }
+            ProcessEntityBatch(EntityPacket);
+        }
+    }
 }
 
 // ── Vertex decode helpers ─────────────────────────────────────────────────────
@@ -104,42 +123,47 @@ static FORCEINLINE int16_t UnpackLo(int32_t V) { return static_cast<int16_t>(V &
  */
 static FColor HslToRgb(int32 Hsl)
 {
-    // Mask to low 15 bits (hsl only)
-    Hsl &= 0x7fff;
+    // Mask to low 16 bits: hue occupies bits 15-10 (6-bit), sat 9-7, lum 6-0.
+    // Must keep bit 15 — stripping it corrupts hues >= 32 (purple, blue, etc.)
+    // Bits 16+ are bias/alpha from (bias<<16)|hsl — safe to drop.
+    Hsl &= 0xffff;
 
-    const float H = float((Hsl >> 10) & 0x3f) / 64.f;
-    const float S = float((Hsl >>  7) & 0x07) / 8.f;
-    const float L = float( Hsl        & 0x7f) / 128.f;
+    // Match hsl_to_rgb.glsl exactly:
+    //   hue = hsl.x / 64.0 + 0.0078125   (hsl.x = bits 14-10, 5-bit, 0-31)
+    //   sat = hsl.y / 8.0  + 0.0625       (hsl.y = bits  9- 7, 3-bit, 0-7)
+    //   lum = hsl.z                        (hsl.z = bits  6- 0, 7-bit, 0-127)
+    const float Hue = float((Hsl >> 10) & 0x3f) / 64.f + 0.0078125f;
+    const float Sat = float((Hsl >>  7) & 0x07) / 8.f  + 0.0625f;
+    const float Lum = float( Hsl        & 0x7f) / 128.f;
 
-    auto Hue2Rgb = [](float p, float q, float t) -> float
+    const float Q = Lum < 0.5f ? Lum * (1.f + Sat) : Lum + Sat - Lum * Sat;
+    const float P = 2.f * Lum - Q;
+
+    // Channels: R uses (hue + 1/3), G uses hue, B uses (hue - 1/3)
+    auto HueChannel = [P, Q](float T) -> float
     {
-        if (t < 0.f) t += 1.f;
-        if (t > 1.f) t -= 1.f;
-        if (t < 1.f / 6.f) return p + (q - p) * 6.f * t;
-        if (t < 1.f / 2.f) return q;
-        if (t < 2.f / 3.f) return p + (q - p) * (2.f / 3.f - t) * 6.f;
-        return p;
+        if (T > 1.f) T -= 1.f;
+        if (T < 0.f) T += 1.f;
+        if (6.f * T < 1.f) return P + (Q - P) * 6.f * T;
+        if (2.f * T < 1.f) return Q;
+        if (3.f * T < 2.f) return P + (Q - P) * (2.f / 3.f - T) * 6.f;
+        return P;
     };
 
-    float R, G, B;
-    if (S < 1e-6f)
-    {
-        R = G = B = L;
-    }
-    else
-    {
-        const float Q = L < 0.5f ? L * (1.f + S) : L + S - L * S;
-        const float P = 2.f * L - Q;
-        R = Hue2Rgb(P, Q, H + 1.f / 3.f);
-        G = Hue2Rgb(P, Q, H);
-        B = Hue2Rgb(P, Q, H - 1.f / 3.f);
-    }
+    const float R = HueChannel(Hue + 1.f / 3.f);
+    const float G = HueChannel(Hue);
+    const float B = HueChannel(Hue - 1.f / 3.f);
+
+    // Store raw HSL lightness (0-127 → 0-255) in alpha so the material can use
+    // it as a greyscale multiplier for textured faces, matching RuneLite's GLSL:
+    //   "float light = float(hsl & 127) / 127.f"
+    const uint8 LightAlpha = uint8(FMath::Clamp((Hsl & 0x7f) * (255.f / 127.f), 0.f, 255.f));
 
     return FColor(
         uint8(FMath::Clamp(R * 255.f, 0.f, 255.f)),
         uint8(FMath::Clamp(G * 255.f, 0.f, 255.f)),
         uint8(FMath::Clamp(B * 255.f, 0.f, 255.f)),
-        255);
+        LightAlpha);
 }
 
 static FVector DecodePosition(const int32_t* Data)
@@ -183,10 +207,10 @@ FProcMeshSection ASceneGraphManager::BuildSection(const int32_t* Data, int32 Int
 
         Vert.Position = DecodePosition(VD);
 
-        // UV0 – texture coords
+        // UV0 – texture coords (signed 16-bit — projected UVs can be negative)
         // VD[3] = (tu << 16) | tt,  VD[4] = (tf << 16) | tv
-        const float tu = static_cast<float>((static_cast<uint32_t>(VD[3]) >> 16) & 0xffff);
-        const float tv = static_cast<float>(VD[4] & 0xffff);
+        const float tu = static_cast<float>(static_cast<int16_t>((static_cast<uint32_t>(VD[3]) >> 16) & 0xffff));
+        const float tv = static_cast<float>(static_cast<int16_t>(VD[4] & 0xffff));
         Vert.UV0 = FVector2D(tu / 256.f, tv / 256.f);
 
         // UV1 – texture ID (1-based) + flags
@@ -375,4 +399,114 @@ void ASceneGraphManager::ProcessSceneClear()
         }
     }
     ZoneMeshes.Empty();
+}
+
+// ── Entity batch ──────────────────────────────────────────────────────────────
+
+/**
+ * Decode a full-frame entity geometry batch.
+ *
+ * Vertex format (6 ints per vertex, putfff4 + put2222 from SceneUploader):
+ *   [0] floatBits(worldX)    [1] floatBits(worldY/height)  [2] floatBits(worldZ)
+ *   [3] abhsl                [4] (su<<16)|texture           [5] (tf<<16)|sv
+ *
+ * Coordinate conversion (scene-local RS units → UE cm):
+ *   UE X = -worldX * RS_TO_UE_SCALE
+ *   UE Y =  worldZ * RS_TO_UE_SCALE
+ *   UE Z = -worldY * RS_TO_UE_SCALE   (RS Y is height, negative = above ground)
+ */
+FProcMeshSection ASceneGraphManager::BuildEntitySection(const int32_t* Data, int32 IntCount)
+{
+    FProcMeshSection Section;
+
+    const int32 NVerts = IntCount / 6;
+    const int32 NTris  = NVerts / 3;
+
+    if (NTris <= 0) return Section;
+
+    Section.ProcVertexBuffer.SetNumUninitialized(NVerts);
+    Section.bEnableCollision = false;
+    Section.bSectionVisible  = true;
+    Section.SectionLocalBox  = FBox(EForceInit::ForceInitToZero);
+
+    for (int32 v = 0; v < NVerts; ++v)
+    {
+        const int32_t* VD = Data + v * 6;
+        FProcMeshVertex& Vert = Section.ProcVertexBuffer[v];
+
+        // Float world-space positions
+        float wx, wy, wz;
+        FMemory::Memcpy(&wx, &VD[0], sizeof(float));
+        FMemory::Memcpy(&wy, &VD[1], sizeof(float));
+        FMemory::Memcpy(&wz, &VD[2], sizeof(float));
+
+        Vert.Position = FVector(-wx * RS_TO_UE_SCALE, wz * RS_TO_UE_SCALE, -wy * RS_TO_UE_SCALE);
+
+        // UV0 – texture coords (signed 16-bit — projected UVs can be negative)
+        // VD[4]: Lo=texture, Hi=su  |  VD[5]: Lo=sv, Hi=tf
+        const float su = static_cast<float>(static_cast<int16_t>((static_cast<uint32_t>(VD[4]) >> 16) & 0xffff));
+        const float sv = static_cast<float>(static_cast<int16_t>(VD[5] & 0xffff));
+        Vert.UV0 = FVector2D(su / 256.f, sv / 256.f);
+
+        // UV1 – texture ID (1-based) + flags
+        Vert.UV1 = FVector2D(float(VD[4] & 0xffff), float((static_cast<uint32_t>(VD[5]) >> 16) & 0xffff));
+
+        // UV2 – depth bias + vertex opacity  (same bit layout as zone VD[2]/abhsl)
+        const float bias      = float((static_cast<uint32_t>(VD[3]) >> 16) & 0xff);
+        const float vertAlpha = float((static_cast<uint32_t>(VD[3]) >> 24) & 0xff) / 255.f;
+        Vert.UV2 = FVector2D(bias, 1.f - vertAlpha);
+
+        Vert.Color   = HslToRgb(VD[3]);
+        Vert.Normal  = FVector::UpVector;
+        Vert.Tangent = FProcMeshTangent(FVector(1.f, 0.f, 0.f), false);
+
+        Section.SectionLocalBox += Vert.Position;
+    }
+
+    Section.ProcIndexBuffer.Reserve(NTris * 3);
+    for (int32 t = 0; t < NTris; ++t)
+    {
+        Section.ProcIndexBuffer.Add(t * 3 + 0);
+        Section.ProcIndexBuffer.Add(t * 3 + 1);
+        Section.ProcIndexBuffer.Add(t * 3 + 2);
+    }
+
+    // Flat normals (no downward flip — entity faces can legitimately face any direction)
+    for (int32 t = 0; t < NTris; ++t)
+    {
+        const int32 i = t * 3;
+        const FVector& P0 = Section.ProcVertexBuffer[i + 0].Position;
+        const FVector& P1 = Section.ProcVertexBuffer[i + 1].Position;
+        const FVector& P2 = Section.ProcVertexBuffer[i + 2].Position;
+        const FVector N = FVector::CrossProduct(P1 - P0, P2 - P0).GetSafeNormal();
+        Section.ProcVertexBuffer[i + 0].Normal = N;
+        Section.ProcVertexBuffer[i + 1].Normal = N;
+        Section.ProcVertexBuffer[i + 2].Normal = N;
+    }
+
+    return Section;
+}
+
+void ASceneGraphManager::ProcessEntityBatch(const FZonePacket& Packet)
+{
+    // Create the entity mesh once
+    if (!EntityMesh)
+    {
+        EntityMesh = NewObject<UProceduralMeshComponent>(this);
+        EntityMesh->SetupAttachment(GetRootComponent());
+        EntityMesh->RegisterComponent();
+        EntityMesh->SetWorldLocation(FVector::ZeroVector);
+    }
+
+    if (Packet.OpaqueIntCount >= 6)
+    {
+        EntityMesh->SetProcMeshSection(0, BuildEntitySection(Packet.Data.GetData(), Packet.OpaqueIntCount));
+
+        UMaterialInterface* Mat = ZoneMaterialDynamic ? ZoneMaterialDynamic.Get() : ZoneMaterial.Get();
+        if (Mat) EntityMesh->SetMaterial(0, Mat);
+    }
+    else
+    {
+        EntityMesh->ClearAllMeshSections();
+    }
 }

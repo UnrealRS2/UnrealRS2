@@ -115,3 +115,75 @@ bool FSceneGraphBridge::PollZone(FZonePacket& Out)
 
     return true;
 }
+
+// ── FEntityBridge ─────────────────────────────────────────────────────────────
+
+FEntityBridge FEntityBridge::Instance;
+
+bool FEntityBridge::Init(const char* Name)
+{
+    hMapFile = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, Name);
+    if (!hMapFile)
+    {
+        hMapFile = CreateFileMappingA(
+            INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+            0,               // high 32 bits — ENTITY_SHM_SIZE fits in 32 bits
+            ENTITY_SHM_SIZE,
+            Name);
+        if (!hMapFile)
+        {
+            UE_LOG(LogTemp, Error, TEXT("EntityBridge: CreateFileMapping failed for %hs"), Name);
+            return false;
+        }
+    }
+
+    Base = reinterpret_cast<uint8*>(
+        MapViewOfFile(hMapFile, FILE_MAP_ALL_ACCESS, 0, 0, ENTITY_SHM_SIZE));
+    if (!Base)
+    {
+        CloseHandle(hMapFile); hMapFile = nullptr;
+        UE_LOG(LogTemp, Error, TEXT("EntityBridge: MapViewOfFile failed for %hs"), Name);
+        return false;
+    }
+
+    // Park read_seq at current write_seq so we don't replay stale data.
+    const uint32 WriteSeq = std::atomic_ref<uint32>(
+        *reinterpret_cast<uint32*>(Base + ENTITY_OFF_WRITE_SEQ)
+    ).load(std::memory_order_acquire);
+    LocalReadSeq = WriteSeq;
+    std::atomic_ref<uint32>(
+        *reinterpret_cast<uint32*>(Base + ENTITY_OFF_READ_SEQ)
+    ).store(WriteSeq, std::memory_order_release);
+
+    UE_LOG(LogTemp, Log, TEXT("EntityBridge: opened %hs (%u bytes)"), Name, ENTITY_SHM_SIZE);
+    return true;
+}
+
+void FEntityBridge::Shutdown()
+{
+    if (Base)     { UnmapViewOfFile(Base); Base = nullptr; }
+    if (hMapFile) { CloseHandle(hMapFile); hMapFile = nullptr; }
+}
+
+bool FEntityBridge::Poll(const int32*& OutData, int32& OutIntCount)
+{
+    if (!Base) return false;
+
+    const uint32 WriteSeq = std::atomic_ref<uint32>(
+        *reinterpret_cast<uint32*>(Base + ENTITY_OFF_WRITE_SEQ)
+    ).load(std::memory_order_acquire);
+
+    if (WriteSeq == LocalReadSeq) return false;
+
+    OutIntCount = *reinterpret_cast<const int32*>(Base + ENTITY_OFF_INT_COUNT);
+    OutIntCount = FMath::Clamp(OutIntCount, 0,
+        (int32)((ENTITY_SHM_SIZE - ENTITY_DATA_BASE) / sizeof(int32)));
+    OutData = reinterpret_cast<const int32*>(Base + ENTITY_DATA_BASE);
+
+    LocalReadSeq = WriteSeq;
+    std::atomic_ref<uint32>(
+        *reinterpret_cast<uint32*>(Base + ENTITY_OFF_READ_SEQ)
+    ).store(LocalReadSeq, std::memory_order_release);
+
+    return true;
+}
