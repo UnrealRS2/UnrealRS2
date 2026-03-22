@@ -4,11 +4,18 @@
 #include "TextureBridge.h"
 #include "Engine/Texture.h"
 #include "HAL/IConsoleManager.h"
+#include "Async/Async.h"
 
 static TAutoConsoleVariable<int32> CVarStaticLighting(
     TEXT("urrl.StaticLighting"),
     1,
     TEXT("0 = UE dynamic lighting, 1 = static/unlit (vanilla OSRS look)"),
+    ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarPassthrough(
+    TEXT("urrl.Passthrough"),
+    0,
+    TEXT("1 = tell RuneLite to skip its GL render pass (UE is the renderer)"),
     ECVF_Default);
 
 // Windows.h defines UpdateResource as UpdateResourceA/W which conflicts with
@@ -20,6 +27,16 @@ static TAutoConsoleVariable<int32> CVarStaticLighting(
 ASceneGraphManager::ASceneGraphManager()
 {
     PrimaryActorTick.bCanEverTick = true;
+}
+
+void ASceneGraphManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    // Wait for any in-flight decode before the actor is destroyed
+    if (EntityDecodeTask.IsValid())
+    {
+        EntityDecodeTask.Wait();
+    }
+    Super::EndPlay(EndPlayReason);
 }
 
 void ASceneGraphManager::BeginPlay()
@@ -62,6 +79,13 @@ void ASceneGraphManager::Tick(float DeltaSeconds)
         TryUploadTextures();
     }
 
+    // Sync UE→Java flags (passthrough, etc.) into SHM header
+    {
+        uint32_t Flags = 0;
+        if (CVarPassthrough.GetValueOnGameThread() != 0) Flags |= SCENE_FLAG_PASSTHROUGH;
+        FSceneGraphBridge::Instance.SetFlags(Flags);
+    }
+
     // Sync StaticLighting CVar to both materials
     const float NewVal = (float)CVarStaticLighting.GetValueOnGameThread();
     if (NewVal != CachedStaticLighting)
@@ -93,22 +117,32 @@ void ASceneGraphManager::Tick(float DeltaSeconds)
         }
     }
 
-    // Poll dedicated entity batch SHM (separate from zone ring — no size limit issues)
+    // ── Entity batch async pipeline ───────────────────────────────────────────
+    // Step 1: if a decode just finished, submit the result to the mesh (game thread only)
+    if (EntityPendingVertCount > 0 && EntityDecodeTask.IsValid() && EntityDecodeTask.IsReady())
+    {
+        SubmitEntityMesh(EntityPendingVertCount);
+        EntityPendingVertCount = 0;
+    }
+
+    // Step 2: if idle, grab the next batch — copy fast, Commit immediately so Java
+    // can write its next frame while we decode this one on a task thread
+    if (EntityPendingVertCount == 0)
     {
         const int32* EntityData  = nullptr;
         int32        EntityCount = 0;
-        if (FEntityBridge::Instance.Poll(EntityData, EntityCount))
+        if (FEntityBridge::Instance.Peek(EntityData, EntityCount) && EntityCount > 0)
         {
-            FZonePacket EntityPacket;
-            EntityPacket.Command        = SCENE_CMD_ENTITY_BATCH;
-            EntityPacket.OpaqueIntCount = EntityCount;
-            EntityPacket.AlphaIntCount  = 0;
-            if (EntityCount > 0)
+            // Raw copy to staging — game thread owns staging until task is launched
+            EntityStagingBuffer.SetNumUninitialized(EntityCount, EAllowShrinking::No);
+            FMemory::Memcpy(EntityStagingBuffer.GetData(), EntityData, EntityCount * sizeof(int32));
+            FEntityBridge::Instance.Commit(); // Java unblocked here, not after decode
+
+            EntityPendingVertCount = EntityCount / 6;
+            EntityDecodeTask = Async(EAsyncExecution::ThreadPool, [this, EntityCount]()
             {
-                EntityPacket.Data.SetNumUninitialized(EntityCount);
-                FMemory::Memcpy(EntityPacket.Data.GetData(), EntityData, EntityCount * sizeof(int32));
-            }
-            ProcessEntityBatch(EntityPacket);
+                DecodeEntityBatchAsync(EntityCount);
+            });
         }
     }
 }
@@ -404,109 +438,106 @@ void ASceneGraphManager::ProcessSceneClear()
 // ── Entity batch ──────────────────────────────────────────────────────────────
 
 /**
- * Decode a full-frame entity geometry batch.
- *
- * Vertex format (6 ints per vertex, putfff4 + put2222 from SceneUploader):
- *   [0] floatBits(worldX)    [1] floatBits(worldY/height)  [2] floatBits(worldZ)
- *   [3] abhsl                [4] (su<<16)|texture           [5] (tf<<16)|sv
- *
- * Coordinate conversion (scene-local RS units → UE cm):
- *   UE X = -worldX * RS_TO_UE_SCALE
- *   UE Y =  worldZ * RS_TO_UE_SCALE
- *   UE Z = -worldY * RS_TO_UE_SCALE   (RS Y is height, negative = above ground)
+ * Decode raw entity ints from EntityStagingBuffer into EntityVertCache.
+ * Runs on a task thread — must NOT touch game-thread-only objects (EntityMesh, etc.).
+ * EntityStagingBuffer is read-only here; game thread wrote it before dispatch.
  */
-FProcMeshSection ASceneGraphManager::BuildEntitySection(const int32_t* Data, int32 IntCount)
+void ASceneGraphManager::DecodeEntityBatchAsync(int32 IntCount)
 {
-    FProcMeshSection Section;
-
     const int32 NVerts = IntCount / 6;
     const int32 NTris  = NVerts / 3;
 
-    if (NTris <= 0) return Section;
+    EntityVertCache.SetNumUninitialized(NVerts, EAllowShrinking::No);
 
-    Section.ProcVertexBuffer.SetNumUninitialized(NVerts);
-    Section.bEnableCollision = false;
-    Section.bSectionVisible  = true;
-    Section.SectionLocalBox  = FBox(EForceInit::ForceInitToZero);
+    const int32_t* Data = EntityStagingBuffer.GetData();
 
-    for (int32 v = 0; v < NVerts; ++v)
+    // Parallel decode: one lambda per triangle — 3 verts + flat normal in one pass
+    ParallelFor(NTris, [this, Data](int32 t)
     {
-        const int32_t* VD = Data + v * 6;
-        FProcMeshVertex& Vert = Section.ProcVertexBuffer[v];
+        const int32 base = t * 3;
 
-        // Float world-space positions
-        float wx, wy, wz;
-        FMemory::Memcpy(&wx, &VD[0], sizeof(float));
-        FMemory::Memcpy(&wy, &VD[1], sizeof(float));
-        FMemory::Memcpy(&wz, &VD[2], sizeof(float));
+        for (int32 d = 0; d < 3; ++d)
+        {
+            const int32      v  = base + d;
+            const int32_t*   VD = Data + v * 6;
+            FProcMeshVertex& Vert = EntityVertCache[v];
 
-        Vert.Position = FVector(-wx * RS_TO_UE_SCALE, wz * RS_TO_UE_SCALE, -wy * RS_TO_UE_SCALE);
+            float wx, wy, wz;
+            FMemory::Memcpy(&wx, &VD[0], sizeof(float));
+            FMemory::Memcpy(&wy, &VD[1], sizeof(float));
+            FMemory::Memcpy(&wz, &VD[2], sizeof(float));
+            Vert.Position = FVector(-wx * RS_TO_UE_SCALE, wz * RS_TO_UE_SCALE, -wy * RS_TO_UE_SCALE);
 
-        // UV0 – texture coords (signed 16-bit — projected UVs can be negative)
-        // VD[4]: Lo=texture, Hi=su  |  VD[5]: Lo=sv, Hi=tf
-        const float su = static_cast<float>(static_cast<int16_t>((static_cast<uint32_t>(VD[4]) >> 16) & 0xffff));
-        const float sv = static_cast<float>(static_cast<int16_t>(VD[5] & 0xffff));
-        Vert.UV0 = FVector2D(su / 256.f, sv / 256.f);
+            const float su = static_cast<float>(static_cast<int16_t>((static_cast<uint32_t>(VD[4]) >> 16) & 0xffff));
+            const float sv = static_cast<float>(static_cast<int16_t>(VD[5] & 0xffff));
+            Vert.UV0 = FVector2D(su / 256.f, sv / 256.f);
+            Vert.UV1 = FVector2D(float(VD[4] & 0xffff), float((static_cast<uint32_t>(VD[5]) >> 16) & 0xffff));
 
-        // UV1 – texture ID (1-based) + flags
-        Vert.UV1 = FVector2D(float(VD[4] & 0xffff), float((static_cast<uint32_t>(VD[5]) >> 16) & 0xffff));
+            const float bias      = float((static_cast<uint32_t>(VD[3]) >> 16) & 0xff);
+            const float vertAlpha = float((static_cast<uint32_t>(VD[3]) >> 24) & 0xff) / 255.f;
+            Vert.UV2    = FVector2D(bias, 1.f - vertAlpha);
+            Vert.Color  = HslToRgb(VD[3]);
+            Vert.Tangent = FProcMeshTangent(FVector(1.f, 0.f, 0.f), false);
+        }
 
-        // UV2 – depth bias + vertex opacity  (same bit layout as zone VD[2]/abhsl)
-        const float bias      = float((static_cast<uint32_t>(VD[3]) >> 16) & 0xff);
-        const float vertAlpha = float((static_cast<uint32_t>(VD[3]) >> 24) & 0xff) / 255.f;
-        Vert.UV2 = FVector2D(bias, 1.f - vertAlpha);
-
-        Vert.Color   = HslToRgb(VD[3]);
-        Vert.Normal  = FVector::UpVector;
-        Vert.Tangent = FProcMeshTangent(FVector(1.f, 0.f, 0.f), false);
-
-        Section.SectionLocalBox += Vert.Position;
-    }
-
-    Section.ProcIndexBuffer.Reserve(NTris * 3);
-    for (int32 t = 0; t < NTris; ++t)
-    {
-        Section.ProcIndexBuffer.Add(t * 3 + 0);
-        Section.ProcIndexBuffer.Add(t * 3 + 1);
-        Section.ProcIndexBuffer.Add(t * 3 + 2);
-    }
-
-    // Flat normals (no downward flip — entity faces can legitimately face any direction)
-    for (int32 t = 0; t < NTris; ++t)
-    {
-        const int32 i = t * 3;
-        const FVector& P0 = Section.ProcVertexBuffer[i + 0].Position;
-        const FVector& P1 = Section.ProcVertexBuffer[i + 1].Position;
-        const FVector& P2 = Section.ProcVertexBuffer[i + 2].Position;
-        const FVector N = FVector::CrossProduct(P1 - P0, P2 - P0).GetSafeNormal();
-        Section.ProcVertexBuffer[i + 0].Normal = N;
-        Section.ProcVertexBuffer[i + 1].Normal = N;
-        Section.ProcVertexBuffer[i + 2].Normal = N;
-    }
-
-    return Section;
+        // Flat normal — one cross product covers all three verts of the triangle
+        const FVector N = FVector::CrossProduct(
+            EntityVertCache[base+1].Position - EntityVertCache[base].Position,
+            EntityVertCache[base+2].Position - EntityVertCache[base].Position
+        ).GetSafeNormal();
+        EntityVertCache[base].Normal = EntityVertCache[base+1].Normal = EntityVertCache[base+2].Normal = N;
+    });
 }
 
-void ASceneGraphManager::ProcessEntityBatch(const FZonePacket& Packet)
+/**
+ * Upload the decoded EntityVertCache to the EntityMesh ProceduralMeshComponent.
+ * Must run on the game thread.
+ */
+void ASceneGraphManager::SubmitEntityMesh(int32 NVerts)
 {
-    // Create the entity mesh once
+    // Create component once
     if (!EntityMesh)
     {
         EntityMesh = NewObject<UProceduralMeshComponent>(this);
         EntityMesh->SetupAttachment(GetRootComponent());
         EntityMesh->RegisterComponent();
         EntityMesh->SetWorldLocation(FVector::ZeroVector);
+        // Exclude from ray tracing — avoids BLAS rebuild on every SetProcMeshSection
+        EntityMesh->SetVisibleInRayTracing(false);
+        EntityMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
 
-    if (Packet.OpaqueIntCount >= 6)
-    {
-        EntityMesh->SetProcMeshSection(0, BuildEntitySection(Packet.Data.GetData(), Packet.OpaqueIntCount));
-
-        UMaterialInterface* Mat = ZoneMaterialDynamic ? ZoneMaterialDynamic.Get() : ZoneMaterial.Get();
-        if (Mat) EntityMesh->SetMaterial(0, Mat);
-    }
-    else
+    const int32 NTris = NVerts / 3;
+    if (NTris <= 0)
     {
         EntityMesh->ClearAllMeshSections();
+        return;
     }
+
+    // Grow sequential index buffer only when needed
+    if (NVerts > EntityIdxCache.Num())
+    {
+        const int32 OldNum = EntityIdxCache.Num();
+        EntityIdxCache.SetNumUninitialized(NVerts, EAllowShrinking::No);
+        for (int32 i = OldNum; i < NVerts; ++i) EntityIdxCache[i] = i;
+    }
+
+    FBox Bounds(EForceInit::ForceInitToZero);
+    for (int32 v = 0; v < NVerts; ++v)
+    {
+        Bounds += EntityVertCache[v].Position;
+    }
+
+    FProcMeshSection Section;
+    Section.ProcVertexBuffer = EntityVertCache;
+    Section.ProcIndexBuffer.SetNumUninitialized(NVerts, EAllowShrinking::No);
+    FMemory::Memcpy(Section.ProcIndexBuffer.GetData(), EntityIdxCache.GetData(), NVerts * sizeof(int32));
+    Section.SectionLocalBox  = Bounds;
+    Section.bEnableCollision = false;
+    Section.bSectionVisible  = true;
+
+    EntityMesh->SetProcMeshSection(0, MoveTemp(Section));
+
+    UMaterialInterface* Mat = ZoneMaterialDynamic ? ZoneMaterialDynamic.Get() : ZoneMaterial.Get();
+    if (Mat) EntityMesh->SetMaterial(0, Mat);
 }

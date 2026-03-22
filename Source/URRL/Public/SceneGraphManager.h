@@ -7,6 +7,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/Texture2DArray.h"
 #include "ProceduralMeshComponent.h"
+#include "Async/Future.h"
 #include "SceneGraphManager.generated.h"
 
 /**
@@ -32,6 +33,7 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
     virtual void Tick(float DeltaSeconds) override;
 
 private:
@@ -65,16 +67,42 @@ private:
     void ProcessZoneData(const struct FZonePacket& Packet);
     void ProcessSceneClear();
     void ProcessZoneClear(int32 ZoneX, int32 ZoneZ);
-    void ProcessEntityBatch(const struct FZonePacket& Packet);
-
     /** Zone geometry: 5 ints/vertex, packed 16-bit integer local positions. */
     static FProcMeshSection BuildSection(const int32_t* Data, int32 IntCount);
-    /** Entity geometry: 6 ints/vertex, float world-space positions (putfff4 + put2222). */
-    static FProcMeshSection BuildEntitySection(const int32_t* Data, int32 IntCount);
 
     static int64 ZoneKey(int32 X, int32 Z) { return (static_cast<int64>(X) << 32) | static_cast<uint32>(Z); }
 
-    /** Single mesh rebuilt every frame from the entity batch. */
+    // ── Entity batch — async decode pipeline ─────────────────────────────────
+    //
+    // Flow each tick:
+    //   1. If decode task is done: SubmitEntityMesh() on game thread
+    //   2. If idle: Peek SHM → memcpy to staging → Commit (unblocks Java) → dispatch decode task
+    //
+    // The async task only writes EntityVertCache. The game thread only reads it
+    // inside SubmitEntityMesh, which runs before the next task is dispatched.
+
+    /** Single mesh rebuilt each time a decode completes. */
     UPROPERTY()
     TObjectPtr<UProceduralMeshComponent> EntityMesh;
+
+    /** Raw int copy of SHM data — written by game thread, read by async decode task. */
+    TArray<int32>           EntityStagingBuffer;
+
+    /** Decoded vertex buffer — written by async task, read by game thread for submit. */
+    TArray<FProcMeshVertex> EntityVertCache;
+
+    /** Sequential index buffer (0,1,2,...) — grow-only, never rebuilt for same/smaller count. */
+    TArray<int32>           EntityIdxCache;
+
+    /** In-flight async decode. Valid when EntityPendingVertCount > 0. */
+    TFuture<void>           EntityDecodeTask;
+
+    /** Number of vertices in the pending decode result (0 = idle). */
+    int32                   EntityPendingVertCount = 0;
+
+    /** Decode raw ints from EntityStagingBuffer into EntityVertCache. Runs on task thread. */
+    void DecodeEntityBatchAsync(int32 IntCount);
+
+    /** Upload EntityVertCache to EntityMesh via SetProcMeshSection. Runs on game thread. */
+    void SubmitEntityMesh(int32 NVerts);
 };

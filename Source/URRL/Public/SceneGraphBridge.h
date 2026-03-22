@@ -67,7 +67,11 @@ static constexpr int    ENTITY_DATA_BASE     = 16;
 // Header offsets
 static constexpr int SCENE_OFF_WRITE_HEAD   = 0;   // uint32 (Java writes)
 static constexpr int SCENE_OFF_READ_HEAD    = 4;   // uint32 (UE writes)
+static constexpr int SCENE_OFF_UE_FLAGS     = 8;   // uint32 (UE writes, Java reads) — bit 0 = passthrough
 static constexpr int SCENE_SLOTS_BASE       = 16;  // first slot starts here
+
+// UE→Java flags (written to SCENE_OFF_UE_FLAGS)
+static constexpr uint32_t SCENE_FLAG_PASSTHROUGH = 1u;  // skip GL rendering in RuneLite
 
 // Per-slot offsets (relative to each slot's base)
 static constexpr int SLOT_OFF_COMMAND       = 0;
@@ -112,6 +116,11 @@ public:
      *  zone arrives. Copies vertex data out and advances read_head internally
      *  so Java can immediately start writing the next slot. */
     bool PollZone(FZonePacket& OutPacket);
+
+    /** Write UE→Java flags into the SHM header padding (offset 8).
+     *  Java reads this each frame to decide whether to skip GL rendering. */
+    void SetFlags(uint32_t Flags);
+
     bool IsInitialized() const { return Base != nullptr; }
 
     static FSceneGraphBridge Instance;
@@ -129,9 +138,13 @@ public:
     bool Init(const char* Name);
     void Shutdown();
 
-    /** Call from game thread each tick. Returns true + fills OutData/OutIntCount
-     *  when a new entity batch is available. Advances read_seq so Java can write next frame. */
-    bool Poll(const int32*& OutData, int32& OutIntCount);
+    /** Returns true + fills OutData/OutIntCount when a new entity batch is available.
+     *  Does NOT advance read_seq — caller must call Commit() when done reading. */
+    bool Peek(const int32*& OutData, int32& OutIntCount);
+
+    /** Advance read_seq, telling Java it may write the next batch. Call after done reading. */
+    void Commit();
+
     bool IsInitialized() const { return Base != nullptr; }
 
     static FEntityBridge Instance;

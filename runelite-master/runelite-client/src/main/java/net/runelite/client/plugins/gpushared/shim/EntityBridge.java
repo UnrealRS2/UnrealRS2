@@ -3,6 +3,7 @@ package net.runelite.client.plugins.gpushared.shim;
 import java.lang.invoke.VarHandle;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.IntBuffer;
 
 /**
  * Java-side bridge for the "URRL_Entities" shared memory.
@@ -71,10 +72,11 @@ public class EntityBridge
 	// ── Send ───────────────────────────────────────────────────────────────────
 
 	/**
-	 * Write the full entity batch for this frame. Blocks briefly if UE hasn't
-	 * consumed the previous frame's batch yet (should be rare at normal framerates).
+	 * Write the full entity batch for this frame directly from a flipped IntBuffer —
+	 * zero heap allocation, single bulk copy into shared memory.
+	 * Blocks briefly if UE hasn't consumed the previous frame's batch yet.
 	 */
-	public void sendEntityBatch(int[] data, int intCount)
+	public void sendEntityBatch(IntBuffer src, int intCount)
 	{
 		if (buf == null)
 		{
@@ -92,9 +94,13 @@ public class EntityBridge
 
 		if (maxInts > 0)
 		{
-			ByteBuffer slice = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN);
-			slice.position(DATA_BASE);
-			slice.asIntBuffer().put(data, 0, maxInts);
+			// Direct bulk transfer: src (direct IntBuffer) → SHM IntBuffer, no int[] needed
+			IntBuffer dst = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+				.position(DATA_BASE)
+				.asIntBuffer();
+			IntBuffer limited = src.duplicate();
+			limited.limit(maxInts);
+			dst.put(limited);
 		}
 
 		localWriteSeq++;

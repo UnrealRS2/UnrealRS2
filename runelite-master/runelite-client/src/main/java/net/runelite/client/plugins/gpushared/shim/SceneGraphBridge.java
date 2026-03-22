@@ -45,7 +45,11 @@ public class SceneGraphBridge
 	// Header offsets
 	private static final int OFF_WRITE_HEAD       = 0;
 	private static final int OFF_READ_HEAD        = 4;
+	private static final int OFF_UE_FLAGS         = 8;   // UE→Java flags (relaxed, read each frame)
 	private static final int SLOTS_BASE           = 16;
+
+	// UE flag bits
+	public static final int FLAG_PASSTHROUGH      = 1;   // UE is rendering; skip GL scene draw
 
 	// Per-slot offsets (from each slot's base)
 	private static final int SLOT_OFF_COMMAND      = 0;
@@ -96,6 +100,21 @@ public class SceneGraphBridge
 			closeSceneMemory(nativeHandle);
 			nativeHandle = 0;
 		}
+	}
+
+	// ── UE→Java flags ─────────────────────────────────────────────────────────
+
+	/** Read the flags UE wrote into the SHM header at offset 8. Returns 0 if not connected. */
+	public int readUEFlags()
+	{
+		if (buf == null) return 0;
+		VarHandle.acquireFence();
+		return buf.getInt(OFF_UE_FLAGS);
+	}
+
+	public boolean isPassthrough()
+	{
+		return (readUEFlags() & FLAG_PASSTHROUGH) != 0;
 	}
 
 	// ── Protocol helpers ──────────────────────────────────────────────────────

@@ -170,6 +170,7 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
 
     private int fboScene;
     private boolean sceneFboValid;
+    private boolean passthroughMode;
     private int rboColorBuffer;
     private int rboDepthBuffer;
 
@@ -862,6 +863,9 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
                              float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw,
                              int minLevel, int level, int maxLevel, Set<Integer> hideRoofIds)
     {
+        // Cache passthrough flag once per frame — avoids per-callback SHM reads
+        passthroughMode = sceneBridge.isPassthrough();
+
         SceneContext ctx = context(scene);
         if (ctx != null)
         {
@@ -878,7 +882,10 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
         {
             this.cameraYaw = client.getCameraYaw();
             this.cameraPitch = client.getCameraPitch();
-            preSceneDrawToplevel(scene, cameraX, cameraY, cameraZ, cameraPitch, cameraYaw);
+            if (!passthroughMode)
+            {
+                preSceneDrawToplevel(scene, cameraX, cameraY, cameraZ, cameraPitch, cameraYaw);
+            }
         }
         else
         {
@@ -1065,6 +1072,8 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
 
     private void postDrawToplevel()
     {
+        if (passthroughMode) return;
+
         glDisable(GL_BLEND);
         glDisable(GL_CULL_FACE);
         glDisable(GL_DEPTH_TEST);
@@ -1113,6 +1122,8 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
             return;
         }
 
+        if (passthroughMode) return;
+
         int offset = scene.getWorldViewId() == -1 ? (SCENE_OFFSET >> 3) : 0;
         z.renderOpaque(zx - offset, zz - offset, ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds);
 
@@ -1138,6 +1149,8 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
         {
             return;
         }
+
+        if (passthroughMode) return;
 
         updateEntityProjection(entityProjection);
         glUniform4i(uniEntityTint, scene.getOverrideHue(), scene.getOverrideSaturation(), scene.getOverrideLuminance(), scene.getOverrideAmount());
@@ -1171,40 +1184,43 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
 
         if (pass == DrawCallbacks.PASS_OPAQUE)
         {
-            vaoO.addRange(projection, scene);
-            vaoPO.addRange(projection, scene);
-
-            if (scene.getWorldViewId() == -1)
+            if (!passthroughMode)
             {
-                glUniform3i(uniBase, 0, 0, 0);
+                vaoO.addRange(projection, scene);
+                vaoPO.addRange(projection, scene);
 
-                int sz = vaoO.unmap();
-                for (int i = 0; i < sz; ++i)
+                if (scene.getWorldViewId() == -1)
                 {
-                    VAO vao = vaoO.vaos.get(i);
-                    vao.draw();
-                    vao.reset();
-                }
+                    glUniform3i(uniBase, 0, 0, 0);
 
-                sz = vaoPO.unmap();
-                if (sz > 0)
-                {
-                    glDepthMask(false);
+                    int sz = vaoO.unmap();
                     for (int i = 0; i < sz; ++i)
                     {
-                        VAO vao = vaoPO.vaos.get(i);
-                        vao.draw();
-                    }
-                    glDepthMask(true);
-
-                    glColorMask(false, false, false, false);
-                    for (int i = 0; i < sz; ++i)
-                    {
-                        VAO vao = vaoPO.vaos.get(i);
+                        VAO vao = vaoO.vaos.get(i);
                         vao.draw();
                         vao.reset();
                     }
-                    glColorMask(true, true, true, true);
+
+                    sz = vaoPO.unmap();
+                    if (sz > 0)
+                    {
+                        glDepthMask(false);
+                        for (int i = 0; i < sz; ++i)
+                        {
+                            VAO vao = vaoPO.vaos.get(i);
+                            vao.draw();
+                        }
+                        glDepthMask(true);
+
+                        glColorMask(false, false, false, false);
+                        for (int i = 0; i < sz; ++i)
+                        {
+                            VAO vao = vaoPO.vaos.get(i);
+                            vao.draw();
+                            vao.reset();
+                        }
+                        glColorMask(true, true, true, true);
+                    }
                 }
             }
         }
@@ -1233,12 +1249,7 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
     {
         int count = entityBatchBuffer.position();
         entityBatchBuffer.flip();
-        int[] data = count > 0 ? new int[count] : new int[0];
-        if (count > 0)
-        {
-            entityBatchBuffer.get(data);
-        }
-        entityBridge.sendEntityBatch(data, count);
+        entityBridge.sendEntityBatch(entityBatchBuffer, count);
         entityBatchBuffer.clear();
     }
 

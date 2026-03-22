@@ -62,6 +62,14 @@ void FSceneGraphBridge::Shutdown()
     }
 }
 
+void FSceneGraphBridge::SetFlags(uint32_t Flags)
+{
+    if (!Base) return;
+    std::atomic_ref<uint32_t>(
+        *reinterpret_cast<uint32_t*>(Base + SCENE_OFF_UE_FLAGS)
+    ).store(Flags, std::memory_order_relaxed);
+}
+
 bool FSceneGraphBridge::PollZone(FZonePacket& Out)
 {
     if (!Base)
@@ -165,7 +173,7 @@ void FEntityBridge::Shutdown()
     if (hMapFile) { CloseHandle(hMapFile); hMapFile = nullptr; }
 }
 
-bool FEntityBridge::Poll(const int32*& OutData, int32& OutIntCount)
+bool FEntityBridge::Peek(const int32*& OutData, int32& OutIntCount)
 {
     if (!Base) return false;
 
@@ -180,10 +188,15 @@ bool FEntityBridge::Poll(const int32*& OutData, int32& OutIntCount)
         (int32)((ENTITY_SHM_SIZE - ENTITY_DATA_BASE) / sizeof(int32)));
     OutData = reinterpret_cast<const int32*>(Base + ENTITY_DATA_BASE);
 
+    // Store WriteSeq so Commit() knows what to advance to
     LocalReadSeq = WriteSeq;
+    return true;
+}
+
+void FEntityBridge::Commit()
+{
+    if (!Base) return;
     std::atomic_ref<uint32>(
         *reinterpret_cast<uint32*>(Base + ENTITY_OFF_READ_SEQ)
     ).store(LocalReadSeq, std::memory_order_release);
-
-    return true;
 }
