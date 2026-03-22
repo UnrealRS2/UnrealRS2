@@ -319,8 +319,11 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
                 adp.get(alphaData, 0, alphaInts);
             }
 
+            long cacheKey = ueZoneKey(mzx, mzz);
+            ueOpaqueCache.put(cacheKey, opaqueData);
+            ueAlphaCache.put(cacheKey, alphaData);
+            ueCountCache.put(cacheKey, new int[]{opaqueInts, alphaInts});
             sceneBridge.sendZone(mzx, mzz, opaqueData, opaqueInts, alphaData, alphaInts);
-            System.out.println("Sent Zone");
         };
         clientUploader.setZoneListener(zoneListener);
         mapUploader.setZoneListener(zoneListener);
@@ -1559,6 +1562,17 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
     SceneGraphBridge sceneBridge = new SceneGraphBridge();
     TextureBridge textureBridge = new TextureBridge();
 
+    // Cache of zone data sent to UE, keyed by (mzx << 32 | mzz).
+    // Used to re-send reused zones with new coordinates on scene transitions.
+    private final Map<Long, int[]> ueOpaqueCache = new HashMap<>();
+    private final Map<Long, int[]> ueAlphaCache  = new HashMap<>();
+    private final Map<Long, int[]> ueCountCache  = new HashMap<>(); // [opaqueInts, alphaInts]
+
+    private static long ueZoneKey(int mzx, int mzz)
+    {
+        return ((long) mzx << 32) | (mzz & 0xFFFFFFFFL);
+    }
+
     @Override
     public void draw(int overlayColor)
     {
@@ -1795,6 +1809,17 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
             }
         }
 
+        // Clear the UE scene; we will re-send all zones below (reused ones from
+        // cache, new ones via the zoneListener during upload).
+        sceneBridge.sendSceneClear();
+        // Snapshot the cache before clearing so reused zones can be re-sent.
+        Map<Long, int[]> oldOpaqueCache = new HashMap<>(ueOpaqueCache);
+        Map<Long, int[]> oldAlphaCache  = new HashMap<>(ueAlphaCache);
+        Map<Long, int[]> oldCountCache  = new HashMap<>(ueCountCache);
+        ueOpaqueCache.clear();
+        ueAlphaCache.clear();
+        ueCountCache.clear();
+
         // find zones which overlap and copy them
         Zone[][] newZones = new Zone[SCENE_ZONES][SCENE_ZONES];
         final GameState gameState = client.getGameState();
@@ -1856,6 +1881,20 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
                         old.cull = false;
 
                         newZones[x][z] = old;
+
+                        // Re-send reused zone to UE with its new scene coordinates.
+                        long oldKey = ueZoneKey(ox, oz);
+                        int[] opaque = oldOpaqueCache.get(oldKey);
+                        int[] counts = oldCountCache.get(oldKey);
+                        if (opaque != null && counts != null)
+                        {
+                            int[] alpha = oldAlphaCache.get(oldKey);
+                            sceneBridge.sendZone(x, z, opaque, counts[0], alpha, counts[1]);
+                            long newKey = ueZoneKey(x, z);
+                            ueOpaqueCache.put(newKey, opaque);
+                            ueAlphaCache.put(newKey, alpha);
+                            ueCountCache.put(newKey, counts);
+                        }
                     }
                 }
             }
