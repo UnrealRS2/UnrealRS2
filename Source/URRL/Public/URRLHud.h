@@ -27,7 +27,7 @@ public:
 	void UpdateDebugText(const FString& NewText);
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void BeginPlay() override;
-	bool UpdateFromSharedMemory(const RLFrameBuffer* Info);
+	bool UpdateFromSharedMemory(RLFrameBuffer* Info);
 
 private:
 	FString CameraDebugText = TEXT("Initializing...");

@@ -5,13 +5,18 @@
 #include "FShimTick.h"
 #include "URRLGameMode.h"
 #include "SharedMemoryBridge.h"
+#include "SceneGraphBridge.h"
+#include "SceneGraphManager.h"
+#include "TextureBridge.h"
 #include "Modules/ModuleManager.h"
 #include "CoreMinimal.h"
 #include "GameFramework/HUD.h"
 #include "URRLHud.h"
+#include "Engine/Engine.h"
 
-bool started = false;
 FSharedMemoryBridge FSharedMemoryBridge::SharedMemoryBridge{};
+FSceneGraphBridge   FSceneGraphBridge::Instance{};
+FTextureBridge      FTextureBridge::Instance{};
 RLCameraStatus* FSharedMemoryBridge::RLCameraStatusPtr;
 RLFrameBuffer* FSharedMemoryBridge::RLFrameBufferPtr;
 SResolution* FSharedMemoryBridge::Resolution;
@@ -21,38 +26,87 @@ SMouseRelease* FSharedMemoryBridge::MouseRelease;
 URRL_API AURRLHud* AURRLGameMode::URRLHud;
 static FShimTick GCameraTick;
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+static void InitOnWorld(UWorld* World)
+{
+	if (FSceneGraphBridge::Instance.IsInitialized())
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("URRL: initialising on game world '%s'"), *World->GetName());
+
+	FSharedMemoryBridge::SharedMemoryBridge.Init("URRL");
+	FSceneGraphBridge::Instance.Init("URRL_Scene");
+	FTextureBridge::Instance.Init("URRL_Textures");
+
+	// Spawn the actor that polls zone packets and builds meshes
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	World->SpawnActor<ASceneGraphManager>(
+		ASceneGraphManager::StaticClass(),
+		FVector::ZeroVector, FRotator::ZeroRotator, Params);
+
+	UE_LOG(LogTemp, Log, TEXT("URRL: init complete"));
+
+	// Defer the HUD lookup one tick because the PlayerController may not exist yet
+	World->GetTimerManager().SetTimerForNextTick([World]()
+	{
+		if (GEngine && GEngine->GameViewport)
+		{
+			if (APlayerController* PC = World->GetFirstPlayerController())
+			{
+				AURRLGameMode::URRLHud = Cast<AURRLHud>(PC->GetHUD());
+			}
+		}
+	});
+}
+
+// ── Module ────────────────────────────────────────────────────────────────────
+
 void FURRLModule::StartupModule()
 {
-	// Run once when the first world is ready
 	FWorldDelegates::OnPostWorldInitialization.AddLambda([](UWorld* World, const UWorld::InitializationValues)
 	{
-		// Wait one tick so the viewport and player controller exist
-		World->GetTimerManager().SetTimerForNextTick([World]()
+		if (World->IsGameWorld())
 		{
-			if (!started)
-			{
-				AsyncTask(ENamedThreads::GameThread, [msg = FString("[INIT]: "), World]()
-									{
-										if (GEngine && GEngine->GameViewport)
-										{
-											//log
-											UE_LOG(LogTemp, Verbose, TEXT("%s"), *msg);
-
-											APlayerController* PC = World->GetFirstPlayerController();
-											AURRLGameMode::URRLHud = Cast<AURRLHud>(PC->GetHUD());
-										}
-									});
-				started = true;
-				FSharedMemoryBridge::SharedMemoryBridge.Init("URRL");
-
-			}
-		});
+			InitOnWorld(World);
+		}
 	});
+
+	// When the game world ends (PIE stop or game quit), tear down the bridge so
+	// the next Play session re-initialises cleanly.
+	FWorldDelegates::OnWorldCleanup.AddLambda([](UWorld* World, bool /*bSessionEnded*/, bool /*bCleanupResources*/)
+	{
+		if (World->IsGameWorld() && FSceneGraphBridge::Instance.IsInitialized())
+		{
+			FSceneGraphBridge::Instance.Shutdown();
+			FTextureBridge::Instance.Shutdown();
+			UE_LOG(LogTemp, Log, TEXT("URRL: bridges shut down on world cleanup"));
+		}
+	});
+
+	// Handle Live Coding reloads: the module re-runs StartupModule after OnPostWorldInitialization
+	// has already fired for the current game world, so check for an existing game world here.
+	if (GEngine)
+	{
+		for (const FWorldContext& Context : GEngine->GetWorldContexts())
+		{
+			UWorld* W = Context.World();
+			if (W && W->IsGameWorld())
+			{
+				InitOnWorld(W);
+				break;
+			}
+		}
+	}
 }
 
 void FURRLModule::ShutdownModule()
 {
-	// Optional: cleanup if needed
+	FSceneGraphBridge::Instance.Shutdown();
+	FTextureBridge::Instance.Shutdown();
 }
 
 

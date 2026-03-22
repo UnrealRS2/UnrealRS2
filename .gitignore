@@ -2,3 +2,17 @@
 Intermediate/
 
 .idea/.idea.URRL.dir/.idea/
+
+Build/
+
+Binaries/
+
+DerivedDataCache/
+
+Saved/
+
+.vs/
+
+.idea/
+
+.claude/

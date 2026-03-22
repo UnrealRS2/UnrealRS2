@@ -1,6 +1,7 @@
-﻿#include "URRLPawn.h"
+#include "URRLPawn.h"
 
 #include "SharedMemoryBridge.h"
+#include "SceneGraphBridge.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
@@ -9,52 +10,92 @@ AURRLPawn::AURRLPawn()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	AutoPossessPlayer = EAutoReceiveInput::Player0;
-	// Create camera
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetWorldLocation(FVector::ZeroVector);
 	Camera->SetWorldRotation(FRotator::ZeroRotator);
-
-	// Disable movement entirely
-	AutoPossessPlayer = EAutoReceiveInput::Player0;
 }
 
 void AURRLPawn::BeginPlay()
 {
 	Super::BeginPlay();
-	
+
+	// Seed free roam position from wherever the pawn was placed in the level.
+	FreeRoamLocation = GetActorLocation();
+	FreeRoamRotation = GetActorRotation();
+
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
-		// Enable mouse and input
-		PC->bShowMouseCursor = true;
-		PC->bEnableClickEvents = true;
-		PC->bEnableMouseOverEvents = true;
-		FInputModeGameAndUI InputMode = FInputModeGameAndUI();
-		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-		InputMode.SetHideCursorDuringCapture(false);
-		PC->SetInputMode(InputMode);
-		EnableInput(PC); // Forces the pawn to bind to this controller
+		if (bFreeRoam)
+		{
+			// Capture mouse for look; cursor hidden while in free roam.
+			PC->bShowMouseCursor = false;
+			PC->SetInputMode(FInputModeGameOnly());
+		}
+		else
+		{
+			PC->bShowMouseCursor = true;
+			PC->bEnableClickEvents = true;
+			PC->bEnableMouseOverEvents = true;
+			FInputModeGameAndUI InputMode;
+			InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+			InputMode.SetHideCursorDuringCapture(false);
+			PC->SetInputMode(InputMode);
+		}
+		EnableInput(PC);
 	}
 }
 
 void AURRLPawn::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-	
-	if (FSharedMemoryBridge::RLCameraStatusPtr)
+
+	if (bFreeRoam)
+	{
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		if (!PC) return;
+
+		// ── Mouse look ────────────────────────────────────────────────────────
+		float MouseDX = 0.f, MouseDY = 0.f;
+		PC->GetInputMouseDelta(MouseDX, MouseDY);
+
+		FreeRoamRotation.Yaw   += MouseDX * FreeRoamMouseSensitivity;
+		FreeRoamRotation.Pitch  = FMath::Clamp(
+			FreeRoamRotation.Pitch - MouseDY * FreeRoamMouseSensitivity, -89.f, 89.f);
+		FreeRoamRotation.Roll = 0.f;
+
+		// ── WASD + Q/E movement ───────────────────────────────────────────────
+		const float Fwd = (PC->IsInputKeyDown(EKeys::W) ? 1.f : 0.f)
+		                - (PC->IsInputKeyDown(EKeys::S) ? 1.f : 0.f);
+		const float Rt  = (PC->IsInputKeyDown(EKeys::D) ? 1.f : 0.f)
+		                - (PC->IsInputKeyDown(EKeys::A) ? 1.f : 0.f);
+		const float Up  = (PC->IsInputKeyDown(EKeys::E) ? 1.f : 0.f)
+		                - (PC->IsInputKeyDown(EKeys::Q) ? 1.f : 0.f);
+
+		// Shift to sprint
+		const float SpeedMult = PC->IsInputKeyDown(EKeys::LeftShift) ? 4.f : 1.f;
+
+		const FRotationMatrix RotMat(FreeRoamRotation);
+		const FVector FwdVec = RotMat.GetScaledAxis(EAxis::X);
+		const FVector RtVec  = RotMat.GetScaledAxis(EAxis::Y);
+
+		FreeRoamLocation += (FwdVec * Fwd + RtVec * Rt + FVector::UpVector * Up)
+		                  * FreeRoamSpeed * SpeedMult * DeltaTime;
+
+		Camera->SetWorldLocation(FreeRoamLocation);
+		Camera->SetWorldRotation(FreeRoamRotation);
+	}
+	else if (FSharedMemoryBridge::RLCameraStatusPtr)
 	{
 		const RLCameraStatus& C = *FSharedMemoryBridge::RLCameraStatusPtr;
-		
-		// Convert RuneLite coordinates to Unreal coordinates if needed
-		FVector NewLocation(C.x, C.y, C.z); // adjust axes swap if RL X/Y != Unreal X/Y
-     
-		float PitchDegrees = C.pitch * (360.f / 2048.f);
-		float YawDegrees   = C.yaw * (360.f / 2048.f);
 
-		FRotator NewRotation(YawDegrees, PitchDegrees, 0.f);
-		
+		// RS scene coords → UE: -X=east, Y=north, Z=up (X and height both negated)
+		FVector NewLocation(-C.x * RS_TO_UE_SCALE, C.z * RS_TO_UE_SCALE, -C.y * RS_TO_UE_SCALE);
+
+		float PitchDegrees = C.pitch * (360.f / 2048.f);
+		float YawDegrees   = C.yaw   * (360.f / 2048.f);
 
 		Camera->SetWorldLocation(NewLocation);
-		Camera->SetWorldRotation(NewRotation);
+		Camera->SetWorldRotation(FRotator(YawDegrees, PitchDegrees, 0.f));
 	}
 }
 
@@ -62,67 +103,46 @@ void AURRLPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
-	// Action bindings
-	PlayerInputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AURRLPawn::OnLeftClick);
-	PlayerInputComponent->BindKey(EKeys::LeftMouseButton, IE_Released, this, &AURRLPawn::OnLeftRelease);
-
-	PlayerInputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AURRLPawn::OnRightClick);
-	PlayerInputComponent->BindKey(EKeys::RightMouseButton, IE_Released, this, &AURRLPawn::OnRightRelease);
-	
-	PlayerInputComponent->BindKey(EKeys::MiddleMouseButton, IE_Pressed, this, &AURRLPawn::OnMidClick);
+	PlayerInputComponent->BindKey(EKeys::LeftMouseButton,   IE_Pressed,  this, &AURRLPawn::OnLeftClick);
+	PlayerInputComponent->BindKey(EKeys::LeftMouseButton,   IE_Released, this, &AURRLPawn::OnLeftRelease);
+	PlayerInputComponent->BindKey(EKeys::RightMouseButton,  IE_Pressed,  this, &AURRLPawn::OnRightClick);
+	PlayerInputComponent->BindKey(EKeys::RightMouseButton,  IE_Released, this, &AURRLPawn::OnRightRelease);
+	PlayerInputComponent->BindKey(EKeys::MiddleMouseButton, IE_Pressed,  this, &AURRLPawn::OnMidClick);
 	PlayerInputComponent->BindKey(EKeys::MiddleMouseButton, IE_Released, this, &AURRLPawn::OnMidRelease);
 }
 
 void AURRLPawn::OnLeftClick()
 {
 	FSharedMemoryBridge::MousePress->button = 1;
-	FSharedMemoryBridge::MousePress->consumed = false;
-
-	if (GEngine)
-		GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Green, TEXT("Left click"));
+	std::atomic_ref<bool>(FSharedMemoryBridge::MousePress->consumed).store(false, std::memory_order_release);
 }
 
 void AURRLPawn::OnLeftRelease()
 {
 	FSharedMemoryBridge::MouseRelease->button = 1;
-	FSharedMemoryBridge::MouseRelease->consumed = false;
-
-	if (GEngine)
-		GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Green, TEXT("Left release"));
+	std::atomic_ref<bool>(FSharedMemoryBridge::MouseRelease->consumed).store(false, std::memory_order_release);
 }
 
 void AURRLPawn::OnRightClick()
 {
 	FSharedMemoryBridge::MousePress->button = 3;
-	FSharedMemoryBridge::MousePress->consumed = false;
-
-	if (GEngine)
-		GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Blue, TEXT("Right click"));
+	std::atomic_ref<bool>(FSharedMemoryBridge::MousePress->consumed).store(false, std::memory_order_release);
 }
 
 void AURRLPawn::OnRightRelease()
 {
 	FSharedMemoryBridge::MouseRelease->button = 3;
-	FSharedMemoryBridge::MouseRelease->consumed = false;
-
-	if (GEngine)
-		GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Blue, TEXT("Right release"));
+	std::atomic_ref<bool>(FSharedMemoryBridge::MouseRelease->consumed).store(false, std::memory_order_release);
 }
 
 void AURRLPawn::OnMidClick()
 {
 	FSharedMemoryBridge::MousePress->button = 2;
-	FSharedMemoryBridge::MousePress->consumed = false;
-
-	if (GEngine)
-		GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Orange, TEXT("Mid click"));
+	std::atomic_ref<bool>(FSharedMemoryBridge::MousePress->consumed).store(false, std::memory_order_release);
 }
 
 void AURRLPawn::OnMidRelease()
 {
 	FSharedMemoryBridge::MouseRelease->button = 2;
-	FSharedMemoryBridge::MouseRelease->consumed = false;
-
-	if (GEngine)
-		GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Orange, TEXT("Mid release"));
+	std::atomic_ref<bool>(FSharedMemoryBridge::MouseRelease->consumed).store(false, std::memory_order_release);
 }

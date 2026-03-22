@@ -11,7 +11,7 @@ public class URRL : ModuleRules
 	
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "RenderCore", "RHI", "InputCore", "EnhancedInput" });
 
-		PrivateDependencyModuleNames.AddRange(new string[] { "UMG" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "UMG", "ProceduralMeshComponent" });
 		
 		if (Target.Platform == UnrealTargetPlatform.Win64)
 		{

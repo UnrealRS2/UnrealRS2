@@ -27,7 +27,8 @@ void AURRLHud::DrawHUD()
 
 	if (!FSharedMemoryBridge::RLFrameBufferPtr) return;
 
-	if (const RLFrameBuffer& F = *FSharedMemoryBridge::RLFrameBufferPtr; F.ready)
+	if (RLFrameBuffer& F = *FSharedMemoryBridge::RLFrameBufferPtr;
+		std::atomic_ref<bool>(F.ready).load(std::memory_order_acquire))
 		UpdateFromSharedMemory(FSharedMemoryBridge::RLFrameBufferPtr);
 	
 	FVector2D ScreenPosition(50, 50);
@@ -97,11 +98,11 @@ void AURRLHud::Tick(float DeltaSeconds)
 			lastX = X;
 			lastY = Y;
 			
-			if (FSharedMemoryBridge::MouseMove->consumed)
+			if (std::atomic_ref<bool>(FSharedMemoryBridge::MouseMove->consumed).load(std::memory_order_acquire))
 			{
 				FSharedMemoryBridge::MouseMove->x = lastX;
 				FSharedMemoryBridge::MouseMove->y = lastY;
-				FSharedMemoryBridge::MouseMove->consumed = false;
+				std::atomic_ref<bool>(FSharedMemoryBridge::MouseMove->consumed).store(false, std::memory_order_release);
 			}
 		}
 		
@@ -121,50 +122,6 @@ void AURRLHud::Tick(float DeltaSeconds)
 	}
 }
 
-void UpdateFrameBufferTexture(UTexture2D* Texture, uint8* Pixels, int32 Width, int32 Height)
-{
-	if (!Texture || !Pixels)
-		return;
-
-	FUpdateTextureRegion2D Region(0, 0, 0, 0, Width, Height);
-
-	// Unreal’s safe, async-friendly helper
-	Texture->UpdateTextureRegions(
-		0,        // mip index
-		1,        // number of regions
-		&Region,  // region(s)
-		Width * 4, // source pitch (bytes per row)
-		4,        // bytes per pixel
-		Pixels    // source data
-	);
-}
-
-void UpdateTexture(UTexture2D* Texture, const uint8* SrcData)
-{
-	if (!Texture || !SrcData) return;
-
-	const int32 Width  = Texture->GetSizeX();
-	const int32 Height = Texture->GetSizeY();
-
-	FUpdateTextureRegion2D Region(0, 0, 0, 0, Width, Height);
-
-	auto Data = MakeShared<TArray<uint8>, ESPMode::ThreadSafe>();
-	Data->SetNumUninitialized(Width * Height * 4);
-	FMemory::Memcpy(Data->GetData(), SrcData, Width * Height * 4);
-
-	ENQUEUE_RENDER_COMMAND(UpdateTextureRegion)(
-		[Texture, Region, Data](FRHICommandListImmediate& RHICmdList)
-		{
-			RHIUpdateTexture2D(
-				Texture->GetResource()->GetTexture2DRHI(),
-				0,
-				Region,
-				Texture->GetSizeX() * 4,
-				Data->GetData()
-			);
-		}
-	);
-}
 
 void AURRLHud::BeginPlay()
 {
@@ -205,54 +162,23 @@ void AURRLHud::BeginPlay()
 	}
 }
 
-bool setMat = false;
-
-UTexture2D* CreateFrameBufferTexture(int32 Width, int32 Height)
-{
-	UTexture2D* Tex = UTexture2D::CreateTransient(Width, Height, PF_B8G8R8A8);
-	Tex->SRGB = true;
-	Tex->NeverStream = true;
-
-	// Force the RHI resource to be created immediately
-	Tex->AddToRoot(); // optional, prevent GC
-	Tex->UpdateResource();
-
-	return Tex;
-}
-
-void UpdateFrameBufferTexture(UTexture2D* Texture, const TArray<FColor>& Pixels)
-{
-	if (!Texture) return;
-
-	const int32 Width  = Texture->GetSizeX();
-	const int32 Height = Texture->GetSizeY();
-
-	FTexture2DMipMap& Mip = Texture->GetPlatformData()->Mips[0];
-	void* Data = Mip.BulkData.Lock(LOCK_READ_WRITE);
-
-	// Copy pixels directly
-	FMemory::Memcpy(Data, Pixels.GetData(), Width * Height * sizeof(FColor));
-
-	Mip.BulkData.Unlock();
-	Texture->UpdateResource(); // <-- REQUIRED
-}
-
 float targetHeight, targetWidth;
 
-bool AURRLHud::UpdateFromSharedMemory(const RLFrameBuffer* Info)
+bool AURRLHud::UpdateFromSharedMemory(RLFrameBuffer* Info)
 {
-    if (!Info || !Info->pixels)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("UpdateFromSharedMemory failed: Info or pixels null"));
-        return false;
-    }
+    if (!Info) return false;
 
     const int32 W = Info->width;
     const int32 H = Info->height;
 
-    // --- Step 1: Create or resize the framebuffer texture ---
+    if (W <= 0 || H <= 0) return false;
+
+    // --- Step 1: Create or resize texture (only when dimensions change) ---
     if (!GDrawTexture || GDrawTexture->GetSizeX() != W || GDrawTexture->GetSizeY() != H)
     {
+        if (GDrawTexture)
+            GDrawTexture->RemoveFromRoot();
+
         GDrawTexture = UTexture2D::CreateTransient(W, H, PF_B8G8R8A8);
         if (!GDrawTexture)
         {
@@ -262,69 +188,53 @@ bool AURRLHud::UpdateFromSharedMemory(const RLFrameBuffer* Info)
 
         GDrawTexture->SRGB = true;
         GDrawTexture->NeverStream = true;
-        GDrawTexture->AddToRoot(); // prevent GC
-        GDrawTexture->UpdateResource();
+        GDrawTexture->AddToRoot();
+        GDrawTexture->UpdateResource(); // create GPU resource once
 
-        // Compute target size to fit viewport while keeping aspect ratio
-        FVector2D ScreenSize;
+        // Letterbox: fit frame inside viewport preserving aspect ratio
         if (GEngine && GEngine->GameViewport)
         {
+            FVector2D ScreenSize;
             GEngine->GameViewport->GetViewportSize(ScreenSize);
-
-            float widthRatio  = ScreenSize.X / W;
-            float heightRatio = ScreenSize.Y / H;
-
-            if (widthRatio > heightRatio)
-            {
-                targetWidth  = W * widthRatio;
-                targetHeight = H * widthRatio;
-            }
-            else
-            {
-                targetWidth  = W * heightRatio;
-                targetHeight = H * heightRatio;
-            }
+            const float Ratio = FMath::Min(ScreenSize.X / W, ScreenSize.Y / H);
+            targetWidth  = W * Ratio;
+            targetHeight = H * Ratio;
         }
-    }
 
-    // --- Step 2: Copy pixels safely ---
-    if (GDrawTexture->GetPlatformData() && GDrawTexture->GetPlatformData()->Mips.Num() > 0)
-    {
-        FTexture2DMipMap& Mip = GDrawTexture->GetPlatformData()->Mips[0];
-        void* Data = Mip.BulkData.Lock(LOCK_READ_WRITE);
-        if (Data)
+        // Bind widget to this texture (only on create/resize, not every frame)
+        if (GFrameBufferImage)
         {
-            FMemory::Memcpy(Data, Info->pixels, W * H * 4);
+            GFrameBufferImage->SetBrushFromTexture(GDrawTexture, true);
+            GFrameBufferImage->SetDesiredSizeOverride(FVector2D(targetWidth, targetHeight));
+            GFrameBufferImage->SetColorAndOpacity(FLinearColor::White);
         }
-        else
+    }
+
+    // --- Step 2: Claim this frame so the game thread won't re-process it next tick ---
+    std::atomic_ref<bool>(Info->ready).store(false, std::memory_order_relaxed);
+
+    // --- Step 3: Upload pixels on the render thread using the raw shared-memory pointer ---
+    // No memcpy needed: Java checks consumed before writing, and consumed stays false
+    // until the render command sets it true after RHIUpdateTexture2D completes.
+    const uint8* Pixels = Info->pixels;
+    UTexture2D* Tex = GDrawTexture;
+    const FUpdateTextureRegion2D Region(0, 0, 0, 0, W, H);
+    const uint32 Pitch = static_cast<uint32>(W) * 4;
+
+    ENQUEUE_RENDER_COMMAND(UploadFrameBuffer)(
+        [Tex, Region, Pitch, Pixels, Info](FRHICommandListImmediate& RHICmdList)
         {
-            UE_LOG(LogTemp, Warning, TEXT("GDrawTexture Mip BulkData lock failed"));
-            Mip.BulkData.Unlock();
-            return false;
+            FTextureResource* Resource = Tex->GetResource();
+            if (Resource && Resource->GetTexture2DRHI())
+            {
+                RHIUpdateTexture2D(Resource->GetTexture2DRHI(), 0, Region, Pitch, Pixels);
+            }
+            // Release: Java may now write the next frame
+            std::atomic_ref<bool>(Info->consumed).store(true, std::memory_order_release);
         }
-        Mip.BulkData.Unlock();
-        GDrawTexture->UpdateResource();
-    }
-    else
-    {
-        UE_LOG(LogTemp, Warning, TEXT("GDrawTexture PlatformData invalid or no Mips"));
-        return false;
-    }
-
-    // --- Step 3: Update UMG Image only if valid ---
-    if (GFrameBufferImage && GDrawTexture)
-    {
-        GFrameBufferImage->SetBrushFromTexture(GDrawTexture, true);
-        GFrameBufferImage->SetDesiredSizeOverride(FVector2D(targetWidth, targetHeight));
-        GFrameBufferImage->SetColorAndOpacity(FLinearColor::White);
-    }
-
-    // --- Step 4: Mark shared memory as consumed ---
-    const_cast<RLFrameBuffer*>(Info)->ready = false;
-    const_cast<RLFrameBuffer*>(Info)->consumed = true;
+    );
 
     ConsumeCounter++;
-
     return true;
 }
 
