@@ -68,10 +68,14 @@ static constexpr int    ENTITY_DATA_BASE     = 16;
 static constexpr int SCENE_OFF_WRITE_HEAD   = 0;   // uint32 (Java writes)
 static constexpr int SCENE_OFF_READ_HEAD    = 4;   // uint32 (UE writes)
 static constexpr int SCENE_OFF_UE_FLAGS     = 8;   // uint32 (UE writes, Java reads) — bit 0 = passthrough
+static constexpr int SCENE_OFF_JAVA_FLAGS   = 12;  // uint32 (Java writes, UE reads) — bit 0 = hide roofs
 static constexpr int SCENE_SLOTS_BASE       = 16;  // first slot starts here
 
 // UE→Java flags (written to SCENE_OFF_UE_FLAGS)
 static constexpr uint32_t SCENE_FLAG_PASSTHROUGH = 1u;  // skip GL rendering in RuneLite
+
+// Java→UE flags (written to SCENE_OFF_JAVA_FLAGS)
+static constexpr uint32_t JAVA_FLAG_HIDE_ROOFS   = 1u;  // truncate zones at roof boundary
 
 // Per-slot offsets (relative to each slot's base)
 static constexpr int SLOT_OFF_COMMAND       = 0;
@@ -79,7 +83,8 @@ static constexpr int SLOT_OFF_ZONE_X        = 4;
 static constexpr int SLOT_OFF_ZONE_Z        = 8;
 static constexpr int SLOT_OFF_OPAQUE_COUNT  = 12;
 static constexpr int SLOT_OFF_ALPHA_COUNT   = 16;
-static constexpr int SLOT_OFF_DATA          = 20;
+static constexpr int SLOT_OFF_ROOF_OFFSET   = 20;  // int32: ints before roof data; == opaque_count if no roof
+static constexpr int SLOT_OFF_DATA          = 24;  // opaque ints then alpha ints
 
 static constexpr uint8_t SCENE_CMD_ZONE_DATA    = 1;
 static constexpr uint8_t SCENE_CMD_ZONE_CLEAR   = 2;
@@ -103,7 +108,8 @@ struct FZonePacket
     int32  ZoneZ;
     int32  OpaqueIntCount;
     int32  AlphaIntCount;
-    TArray<int32> Data;  // copied out of shared memory before advancing read_head
+    int32  RoofOffset;    // ints into opaque data where roof geometry starts; == OpaqueIntCount if none
+    TArray<int32> Data;   // copied out of shared memory before advancing read_head
 };
 
 class FSceneGraphBridge
@@ -117,9 +123,11 @@ public:
      *  so Java can immediately start writing the next slot. */
     bool PollZone(FZonePacket& OutPacket);
 
-    /** Write UE→Java flags into the SHM header padding (offset 8).
-     *  Java reads this each frame to decide whether to skip GL rendering. */
+    /** Write UE→Java flags into the SHM header (offset 8). */
     void SetFlags(uint32_t Flags);
+
+    /** Read Java→UE flags from the SHM header (offset 12). */
+    uint32_t ReadJavaFlags() const;
 
     bool IsInitialized() const { return Base != nullptr; }
 

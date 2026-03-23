@@ -58,8 +58,12 @@ private:
     UPROPERTY()
     TObjectPtr<UTexture2DArray> ZoneTextureArray;
 
+    /** Zone keys that have a roof section (section 1) built. Used for fast visibility toggle. */
+    TSet<int64> ZoneRoofKeys;
+
     bool  bTexturesUploaded    = false;
     float CachedStaticLighting = -1.f;
+    bool  bHideRoofs           = false;
 
     void TryUploadTextures();
     void ApplyMaterialParams(UMaterialInstanceDynamic* MID);

@@ -71,11 +71,11 @@ public class Zone
 	public boolean dirty; // whether the zone has temporary modifications
 	public boolean invalidate; // whether the zone needs rebuilding
 
-	int[] levelOffsets = new int[4]; // buffer pos in ints for the end of the level
+	public int[] levelOffsets = new int[4]; // buffer pos in ints for the end of the level
 
-	int[][] rids;
-	int[][] roofStart;
-	int[][] roofEnd;
+	public int[][] rids;
+	public int[][] roofStart;
+	public int[][] roofEnd;
 
 	final List<AlphaModel> alphaModels = new ArrayList<>(0);
 

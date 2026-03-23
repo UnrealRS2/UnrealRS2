@@ -46,10 +46,14 @@ public class SceneGraphBridge
 	private static final int OFF_WRITE_HEAD       = 0;
 	private static final int OFF_READ_HEAD        = 4;
 	private static final int OFF_UE_FLAGS         = 8;   // UE→Java flags (relaxed, read each frame)
+	private static final int OFF_JAVA_FLAGS       = 12;  // Java→UE flags (relaxed, written each frame)
 	private static final int SLOTS_BASE           = 16;
 
-	// UE flag bits
+	// UE→Java flag bits
 	public static final int FLAG_PASSTHROUGH      = 1;   // UE is rendering; skip GL scene draw
+
+	// Java→UE flag bits
+	public static final int JAVA_FLAG_HIDE_ROOFS  = 1;   // hide roof sections in UE
 
 	// Per-slot offsets (from each slot's base)
 	private static final int SLOT_OFF_COMMAND      = 0;
@@ -57,7 +61,8 @@ public class SceneGraphBridge
 	private static final int SLOT_OFF_ZONE_Z       = 8;
 	private static final int SLOT_OFF_OPAQUE_COUNT = 12;
 	private static final int SLOT_OFF_ALPHA_COUNT  = 16;
-	private static final int SLOT_OFF_DATA         = 20;
+	private static final int SLOT_OFF_ROOF_OFFSET  = 20;  // ints before roof data; == opaque_count if none
+	private static final int SLOT_OFF_DATA         = 24;
 
 	private static final int SLOT_COUNT      = 256;
 	private static final int SLOT_BYTES      = 2 * 1024 * 1024;
@@ -151,9 +156,18 @@ public class SceneGraphBridge
 
 	// ── Public send methods ───────────────────────────────────────────────────
 
+	/** Write Java→UE flags (relaxed store — UE polls this each tick). */
+	public void setJavaFlags(int flags)
+	{
+		if (buf == null) return;
+		buf.putInt(OFF_JAVA_FLAGS, flags);
+		VarHandle.releaseFence();
+	}
+
 	public void sendZone(int mzx, int mzz,
 		int[] opaqueData, int opaqueInts,
-		int[] alphaData,  int alphaInts)
+		int[] alphaData,  int alphaInts,
+		int   roofOffset)
 	{
 		if (buf == null || opaqueInts <= 0)
 		{
@@ -164,12 +178,14 @@ public class SceneGraphBridge
 		int base      = slotBase(localWriteHead);
 		int maxOpaque = Math.min(opaqueInts, MAX_SLOT_DATA_INTS);
 		int maxAlpha  = Math.min(alphaInts,  MAX_SLOT_DATA_INTS - maxOpaque);
+		int clampedRoof = Math.min(roofOffset, maxOpaque);
 
 		buf.put(base + SLOT_OFF_COMMAND, (byte) CMD_ZONE_DATA);
-		buf.putInt(base + SLOT_OFF_ZONE_X, mzx);
-		buf.putInt(base + SLOT_OFF_ZONE_Z, mzz);
+		buf.putInt(base + SLOT_OFF_ZONE_X,       mzx);
+		buf.putInt(base + SLOT_OFF_ZONE_Z,       mzz);
 		buf.putInt(base + SLOT_OFF_OPAQUE_COUNT, maxOpaque);
 		buf.putInt(base + SLOT_OFF_ALPHA_COUNT,  maxAlpha);
+		buf.putInt(base + SLOT_OFF_ROOF_OFFSET,  clampedRoof);
 
 		ByteBuffer slice = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN);
 		slice.position(base + SLOT_OFF_DATA);

@@ -97,6 +97,7 @@ bool FSceneGraphBridge::PollZone(FZonePacket& Out)
     Out.ZoneZ          = *reinterpret_cast<const int32*>(Slot + SLOT_OFF_ZONE_Z);
     Out.OpaqueIntCount = *reinterpret_cast<const int32*>(Slot + SLOT_OFF_OPAQUE_COUNT);
     Out.AlphaIntCount  = *reinterpret_cast<const int32*>(Slot + SLOT_OFF_ALPHA_COUNT);
+    Out.RoofOffset     = *reinterpret_cast<const int32*>(Slot + SLOT_OFF_ROOF_OFFSET);
 
     UE_LOG(LogTemp, Log, TEXT("SceneGraphBridge: slot[%u] cmd=%d zone(%d,%d) opaque=%d alpha=%d"),
         SlotIdx, Out.Command, Out.ZoneX, Out.ZoneZ, Out.OpaqueIntCount, Out.AlphaIntCount);
@@ -105,6 +106,7 @@ bool FSceneGraphBridge::PollZone(FZonePacket& Out)
     static constexpr int32 MaxSlotDataInts = (SCENE_SLOT_BYTES - SLOT_OFF_DATA) / sizeof(int32);
     Out.OpaqueIntCount = FMath::Min(Out.OpaqueIntCount, MaxSlotDataInts);
     Out.AlphaIntCount  = FMath::Min(Out.AlphaIntCount,  MaxSlotDataInts - Out.OpaqueIntCount);
+    Out.RoofOffset     = FMath::Clamp(Out.RoofOffset, 0, Out.OpaqueIntCount);
 
     const int32 TotalInts = Out.OpaqueIntCount + Out.AlphaIntCount;
     Out.Data.SetNumUninitialized(TotalInts);
@@ -122,6 +124,14 @@ bool FSceneGraphBridge::PollZone(FZonePacket& Out)
     ).store(ReadHead + 1, std::memory_order_release);
 
     return true;
+}
+
+uint32_t FSceneGraphBridge::ReadJavaFlags() const
+{
+    if (!Base) return 0;
+    return std::atomic_ref<const uint32_t>(
+        *reinterpret_cast<const uint32_t*>(Base + SCENE_OFF_JAVA_FLAGS)
+    ).load(std::memory_order_relaxed);
 }
 
 // ── FEntityBridge ─────────────────────────────────────────────────────────────

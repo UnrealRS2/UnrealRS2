@@ -97,6 +97,22 @@ void ASceneGraphManager::Tick(float DeltaSeconds)
             ZoneAlphaMaterialDynamic->SetScalarParameterValue(TEXT("StaticLighting"), NewVal);
     }
 
+    // Read Java→UE hide-roofs flag and toggle roof sections if it changed
+    {
+        const bool bNewHideRoofs = (FSceneGraphBridge::Instance.ReadJavaFlags() & JAVA_FLAG_HIDE_ROOFS) != 0;
+        if (bNewHideRoofs != bHideRoofs)
+        {
+            bHideRoofs = bNewHideRoofs;
+            for (int64 Key : ZoneRoofKeys)
+            {
+                if (UProceduralMeshComponent** Found = ZoneMeshes.Find(Key))
+                {
+                    (*Found)->SetMeshSectionVisible(1, !bHideRoofs);
+                }
+            }
+        }
+    }
+
     // Drain all queued zone packets this tick
     FZonePacket Packet;
     while (FSceneGraphBridge::Instance.PollZone(Packet))
@@ -392,28 +408,45 @@ void ASceneGraphManager::ProcessZoneData(const FZonePacket& Packet)
         ZoneMeshes.Add(Key, Mesh);
     }
 
-    // Section 0 — opaque geometry
-    if (Packet.OpaqueIntCount >= 5)
-    {
-        Mesh->SetProcMeshSection(0, BuildSection(Data, Packet.OpaqueIntCount));
+    UMaterialInterface* Mat      = ZoneMaterialDynamic      ? ZoneMaterialDynamic.Get()      : ZoneMaterial.Get();
+    UMaterialInterface* AlphaMat = ZoneAlphaMaterialDynamic ? ZoneAlphaMaterialDynamic.Get() : ZoneAlphaMaterial.Get();
 
-        UMaterialInterface* Mat = ZoneMaterialDynamic ? ZoneMaterialDynamic.Get() : ZoneMaterial.Get();
+    // Section 0 — ground-level opaque geometry (0..RoofOffset)
+    const int32 GroundInts = Packet.RoofOffset;
+    if (GroundInts >= 5)
+    {
+        Mesh->SetProcMeshSection(0, BuildSection(Data, GroundInts));
         if (Mat) Mesh->SetMaterial(0, Mat);
     }
 
-    // Section 1 — alpha (translucent) geometry
+    // Section 1 — roof / upper-floor opaque geometry (RoofOffset..OpaqueIntCount)
+    const int32 RoofInts = Packet.OpaqueIntCount - Packet.RoofOffset;
+    if (RoofInts >= 5)
+    {
+        Mesh->SetProcMeshSection(1, BuildSection(Data + GroundInts, RoofInts));
+        if (Mat) Mesh->SetMaterial(1, Mat);
+        Mesh->SetMeshSectionVisible(1, !bHideRoofs);
+        ZoneRoofKeys.Add(Key);
+    }
+    else
+    {
+        // No roof data — clear any stale section from a previous upload and remove from set
+        Mesh->ClearMeshSection(1);
+        ZoneRoofKeys.Remove(Key);
+    }
+
+    // Section 2 — alpha (translucent) geometry
     if (Packet.AlphaIntCount >= 5)
     {
-        Mesh->SetProcMeshSection(1, BuildSection(Data + Packet.OpaqueIntCount, Packet.AlphaIntCount));
-
-        UMaterialInterface* AlphaMat = ZoneAlphaMaterialDynamic ? ZoneAlphaMaterialDynamic.Get() : ZoneAlphaMaterial.Get();
-        if (AlphaMat) Mesh->SetMaterial(1, AlphaMat);
+        Mesh->SetProcMeshSection(2, BuildSection(Data + Packet.OpaqueIntCount, Packet.AlphaIntCount));
+        if (AlphaMat) Mesh->SetMaterial(2, AlphaMat);
     }
 }
 
 void ASceneGraphManager::ProcessZoneClear(int32 ZoneX, int32 ZoneZ)
 {
     const int64 Key = ZoneKey(ZoneX, ZoneZ);
+    ZoneRoofKeys.Remove(Key);
     if (UProceduralMeshComponent** Found = ZoneMeshes.Find(Key))
     {
         (*Found)->ClearAllMeshSections();
@@ -424,6 +457,7 @@ void ASceneGraphManager::ProcessZoneClear(int32 ZoneX, int32 ZoneZ)
 
 void ASceneGraphManager::ProcessSceneClear()
 {
+    ZoneRoofKeys.Empty();
     for (auto& Pair : ZoneMeshes)
     {
         if (Pair.Value)

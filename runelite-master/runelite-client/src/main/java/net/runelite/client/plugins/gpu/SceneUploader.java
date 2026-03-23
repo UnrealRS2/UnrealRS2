@@ -75,7 +75,7 @@ public class SceneUploader
 
 	public interface ZoneUploadListener
 	{
-		void onZoneUploaded(int mzx, int mzz, GpuIntBuffer opaqueVb, GpuIntBuffer alphaVb);
+		void onZoneUploaded(int mzx, int mzz, Zone zone, GpuIntBuffer opaqueVb, GpuIntBuffer alphaVb);
 	}
 
 	private ZoneUploadListener zoneListener;
@@ -158,7 +158,7 @@ public class SceneUploader
 
 		if (zoneListener != null)
 		{
-			zoneListener.onZoneUploaded(mzx, mzz, vb, ab);
+			zoneListener.onZoneUploaded(mzx, mzz, zone, vb, ab);
 		}
 	}
 

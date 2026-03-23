@@ -295,7 +295,7 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
         mapUploader = new SceneUploader(renderCallbackManager);
         facePrioritySorter = new FacePrioritySorter(clientUploader);
 
-        SceneUploader.ZoneUploadListener zoneListener = (mzx, mzz, opaqueVb, alphaVb) ->
+        SceneUploader.ZoneUploadListener zoneListener = (mzx, mzz, zone, opaqueVb, alphaVb) ->
         {
             java.nio.IntBuffer ob = opaqueVb != null ? opaqueVb.getBuffer() : null;
             java.nio.IntBuffer ab = alphaVb  != null ? alphaVb.getBuffer()  : null;
@@ -307,6 +307,14 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
             {
                 return;
             }
+
+            // levelOffset0: int position where level-0 (ground) data ends.
+            // Everything after is roofs/upper floors.  UE stores both sections;
+            // roof visibility is toggled on the UE side via the Java→UE flag.
+            int levelOffset0 = (zone.levelOffsets != null
+                                && zone.levelOffsets[0] > 0
+                                && zone.levelOffsets[0] < opaqueInts)
+                               ? zone.levelOffsets[0] : opaqueInts;
 
             int[] opaqueData = new int[opaqueInts];
             java.nio.IntBuffer dup = ob.duplicate();
@@ -325,8 +333,9 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
             long cacheKey = ueZoneKey(mzx, mzz);
             ueOpaqueCache.put(cacheKey, opaqueData);
             ueAlphaCache.put(cacheKey, alphaData);
-            ueCountCache.put(cacheKey, new int[]{opaqueInts, alphaInts});
-            sceneBridge.sendZone(mzx, mzz, opaqueData, opaqueInts, alphaData, alphaInts);
+            // counts[0]=opaqueInts, counts[1]=alphaInts, counts[2]=levelOffset0 (roof boundary)
+            ueCountCache.put(cacheKey, new int[]{opaqueInts, alphaInts, levelOffset0});
+            sceneBridge.sendZone(mzx, mzz, opaqueData, opaqueInts, alphaData, alphaInts, levelOffset0);
         };
         clientUploader.setZoneListener(zoneListener);
         mapUploader.setZoneListener(zoneListener);
@@ -876,6 +885,16 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
             ctx.level = level;
             ctx.maxLevel = maxLevel;
             ctx.hideRoofIds = hideRoofIds;
+
+        }
+
+        // When maxLevel changes, write the hide-roofs flag into the Java→UE header.
+        // UE reads this each tick and toggles roof section visibility instantly.
+        if (maxLevel != ueMaxLevel)
+        {
+            ueMaxLevel = maxLevel;
+            int flags = (ueMaxLevel < 3) ? SceneGraphBridge.JAVA_FLAG_HIDE_ROOFS : 0;
+            sceneBridge.setJavaFlags(flags);
         }
 
         if (scene.getWorldViewId() == WorldView.TOPLEVEL)
@@ -1267,6 +1286,12 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
             return;
         }
 
+        // Forward to UE entity batch — covers fires, animated objects, wall/ground decorations
+        if (scene.getWorldViewId() == -1)
+        {
+            clientUploader.uploadTempModel(m, orient, x, y, z, entityBatchBuffer);
+        }
+
         int size = m.getFaceCount() * 3 * VAO.VERT_SIZE;
         if (m.getFaceTransparencies() == null)
         {
@@ -1619,11 +1644,15 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
     private final Map<Long, int[]> ueOpaqueCache = new HashMap<>();
     private final Map<Long, int[]> ueAlphaCache  = new HashMap<>();
     private final Map<Long, int[]> ueCountCache  = new HashMap<>(); // [opaqueInts, alphaInts]
+    /** maxLevel from preSceneDraw; < 3 when inside a building (roofs hidden). */
+    private int ueMaxLevel = 3;
 
     private static long ueZoneKey(int mzx, int mzz)
     {
         return ((long) mzx << 32) | (mzz & 0xFFFFFFFFL);
     }
+
+
 
     // Per-frame entity geometry accumulation buffer (6 ints per vertex, putfff4 + put2222).
     // Flushed to UE as a single ENTITY_BATCH packet at the end of PASS_ALPHA.
@@ -1945,7 +1974,8 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
                         if (opaque != null && counts != null)
                         {
                             int[] alpha = oldAlphaCache.get(oldKey);
-                            sceneBridge.sendZone(x, z, opaque, counts[0], alpha, counts[1]);
+                            int roofOff = counts.length > 2 ? counts[2] : counts[0];
+                            sceneBridge.sendZone(x, z, opaque, counts[0], alpha, counts[1], roofOff);
                             long newKey = ueZoneKey(x, z);
                             ueOpaqueCache.put(newKey, opaque);
                             ueAlphaCache.put(newKey, alpha);
