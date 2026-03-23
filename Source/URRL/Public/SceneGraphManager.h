@@ -88,21 +88,26 @@ private:
     /** Raw int copy of SHM data — written by game thread, read by async decode task. */
     TArray<int32>           EntityStagingBuffer;
 
-    /** Decoded vertex buffer — written by async task, read by game thread for submit. */
-    TArray<FProcMeshVertex> EntityVertCache;
+    /** Decoded opaque/alpha vertex buffers — written by async task, read by game thread. */
+    TArray<FProcMeshVertex> EntityOpaqueVertCache;
+    TArray<FProcMeshVertex> EntityAlphaVertCache;
 
-    /** Sequential index buffer (0,1,2,...) — grow-only, never rebuilt for same/smaller count. */
-    TArray<int32>           EntityIdxCache;
+    /** Sequential index buffers (0,1,2,...) — grow-only. */
+    TArray<int32>           EntityOpaqueIdxCache;
+    TArray<int32>           EntityAlphaIdxCache;
 
     /** In-flight async decode. Valid when EntityPendingVertCount > 0. */
     TFuture<void>           EntityDecodeTask;
 
-    /** Number of vertices in the pending decode result (0 = idle). */
-    int32                   EntityPendingVertCount = 0;
+    /** Total verts in pending result (> 0 means task result is waiting to submit). */
+    int32                   EntityPendingVertCount    = 0;
+    /** Opaque/alpha split counts set by the async task, read after IsReady(). */
+    int32                   EntityPendingOpaqueVerts  = 0;
+    int32                   EntityPendingAlphaVerts   = 0;
 
-    /** Decode raw ints from EntityStagingBuffer into EntityVertCache. Runs on task thread. */
+    /** Decode raw ints from EntityStagingBuffer into Opaque/Alpha vert caches. Runs on task thread. */
     void DecodeEntityBatchAsync(int32 IntCount);
 
-    /** Upload EntityVertCache to EntityMesh via SetProcMeshSection. Runs on game thread. */
-    void SubmitEntityMesh(int32 NVerts);
+    /** Upload decoded caches to EntityMesh sections 0 (opaque) and 1 (alpha). Runs on game thread. */
+    void SubmitEntityMesh();
 };

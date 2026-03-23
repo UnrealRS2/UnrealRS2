@@ -121,7 +121,7 @@ void ASceneGraphManager::Tick(float DeltaSeconds)
     // Step 1: if a decode just finished, submit the result to the mesh (game thread only)
     if (EntityPendingVertCount > 0 && EntityDecodeTask.IsValid() && EntityDecodeTask.IsReady())
     {
-        SubmitEntityMesh(EntityPendingVertCount);
+        SubmitEntityMesh();
         EntityPendingVertCount = 0;
     }
 
@@ -438,29 +438,41 @@ void ASceneGraphManager::ProcessSceneClear()
 // ── Entity batch ──────────────────────────────────────────────────────────────
 
 /**
- * Decode raw entity ints from EntityStagingBuffer into EntityVertCache.
+ * Decode raw entity ints from EntityStagingBuffer into OpaqueVertCache + AlphaVertCache.
+ * Triangles with vertAlpha > 0 (bits 31-24 of VD[3]) go to the alpha section.
  * Runs on a task thread — must NOT touch game-thread-only objects (EntityMesh, etc.).
- * EntityStagingBuffer is read-only here; game thread wrote it before dispatch.
  */
 void ASceneGraphManager::DecodeEntityBatchAsync(int32 IntCount)
 {
-    const int32 NVerts = IntCount / 6;
-    const int32 NTris  = NVerts / 3;
+    const int32    NTris = IntCount / 18; // 6 ints/vert × 3 verts/tri
+    const int32_t* Data  = EntityStagingBuffer.GetData();
 
-    EntityVertCache.SetNumUninitialized(NVerts, EAllowShrinking::No);
-
-    const int32_t* Data = EntityStagingBuffer.GetData();
-
-    // Parallel decode: one lambda per triangle — 3 verts + flat normal in one pass
-    ParallelFor(NTris, [this, Data](int32 t)
+    // ── Pass 1: count opaque vs alpha triangles ───────────────────────────────
+    int32 NOpaqueT = 0, NAlphaT = 0;
+    for (int32 t = 0; t < NTris; ++t)
     {
-        const int32 base = t * 3;
+        const uint32_t abhsl = static_cast<uint32_t>(Data[t * 18 + 3]); // VD[3] of first vert
+        if ((abhsl >> 24) & 0xff) ++NAlphaT;
+        else                      ++NOpaqueT;
+    }
 
+    EntityOpaqueVertCache.SetNumUninitialized(NOpaqueT * 3, EAllowShrinking::No);
+    EntityAlphaVertCache .SetNumUninitialized(NAlphaT  * 3, EAllowShrinking::No);
+
+    // ── Pass 2: decode and sort into the two caches ───────────────────────────
+    int32 oOut = 0, aOut = 0;
+    for (int32 t = 0; t < NTris; ++t)
+    {
+        const int32   srcV0  = t * 3;
+        const bool    bAlpha = ((static_cast<uint32_t>(Data[srcV0 * 6 + 3]) >> 24) & 0xff) != 0;
+        TArray<FProcMeshVertex>& Buf = bAlpha ? EntityAlphaVertCache : EntityOpaqueVertCache;
+        int32&                   Out = bAlpha ? aOut                 : oOut;
+
+        const int32 triStart = Out;
         for (int32 d = 0; d < 3; ++d)
         {
-            const int32      v  = base + d;
-            const int32_t*   VD = Data + v * 6;
-            FProcMeshVertex& Vert = EntityVertCache[v];
+            const int32_t*   VD   = Data + (srcV0 + d) * 6;
+            FProcMeshVertex& Vert = Buf[Out++];
 
             float wx, wy, wz;
             FMemory::Memcpy(&wx, &VD[0], sizeof(float));
@@ -480,64 +492,70 @@ void ASceneGraphManager::DecodeEntityBatchAsync(int32 IntCount)
             Vert.Tangent = FProcMeshTangent(FVector(1.f, 0.f, 0.f), false);
         }
 
-        // Flat normal — one cross product covers all three verts of the triangle
+        // Flat normal for this triangle
         const FVector N = FVector::CrossProduct(
-            EntityVertCache[base+1].Position - EntityVertCache[base].Position,
-            EntityVertCache[base+2].Position - EntityVertCache[base].Position
+            Buf[triStart+1].Position - Buf[triStart].Position,
+            Buf[triStart+2].Position - Buf[triStart].Position
         ).GetSafeNormal();
-        EntityVertCache[base].Normal = EntityVertCache[base+1].Normal = EntityVertCache[base+2].Normal = N;
-    });
+        Buf[triStart].Normal = Buf[triStart+1].Normal = Buf[triStart+2].Normal = N;
+    }
+
+    EntityPendingOpaqueVerts = NOpaqueT * 3;
+    EntityPendingAlphaVerts  = NAlphaT  * 3;
+}
+
+// Helper: build + upload one ProcMeshSection from a vert cache
+static void UploadSection(UProceduralMeshComponent* Mesh, int32 SectionIdx,
+                          TArray<FProcMeshVertex>& Verts, TArray<int32>& IdxCache,
+                          UMaterialInterface* Mat)
+{
+    const int32 NVerts = Verts.Num();
+    if (NVerts <= 0)
+    {
+        Mesh->ClearMeshSection(SectionIdx);
+        return;
+    }
+
+    if (NVerts > IdxCache.Num())
+    {
+        const int32 Old = IdxCache.Num();
+        IdxCache.SetNumUninitialized(NVerts, EAllowShrinking::No);
+        for (int32 i = Old; i < NVerts; ++i) IdxCache[i] = i;
+    }
+
+    FBox Bounds(EForceInit::ForceInitToZero);
+    for (const FProcMeshVertex& V : Verts) Bounds += V.Position;
+
+    FProcMeshSection Section;
+    Section.ProcVertexBuffer = Verts;
+    Section.ProcIndexBuffer.SetNumUninitialized(NVerts, EAllowShrinking::No);
+    FMemory::Memcpy(Section.ProcIndexBuffer.GetData(), IdxCache.GetData(), NVerts * sizeof(int32));
+    Section.SectionLocalBox  = Bounds;
+    Section.bEnableCollision = false;
+    Section.bSectionVisible  = true;
+
+    Mesh->SetProcMeshSection(SectionIdx, MoveTemp(Section));
+    if (Mat) Mesh->SetMaterial(SectionIdx, Mat);
 }
 
 /**
- * Upload the decoded EntityVertCache to the EntityMesh ProceduralMeshComponent.
+ * Upload decoded opaque+alpha caches to EntityMesh sections 0 and 1.
  * Must run on the game thread.
  */
-void ASceneGraphManager::SubmitEntityMesh(int32 NVerts)
+void ASceneGraphManager::SubmitEntityMesh()
 {
-    // Create component once
     if (!EntityMesh)
     {
         EntityMesh = NewObject<UProceduralMeshComponent>(this);
         EntityMesh->SetupAttachment(GetRootComponent());
         EntityMesh->RegisterComponent();
         EntityMesh->SetWorldLocation(FVector::ZeroVector);
-        // Exclude from ray tracing — avoids BLAS rebuild on every SetProcMeshSection
-        EntityMesh->SetVisibleInRayTracing(false);
         EntityMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
 
-    const int32 NTris = NVerts / 3;
-    if (NTris <= 0)
-    {
-        EntityMesh->ClearAllMeshSections();
-        return;
-    }
+    UMaterialInterface* OpaqueMat = ZoneMaterialDynamic      ? ZoneMaterialDynamic.Get()      : ZoneMaterial.Get();
+    UMaterialInterface* AlphaMat  = ZoneAlphaMaterialDynamic ? ZoneAlphaMaterialDynamic.Get() : ZoneAlphaMaterial.Get();
 
-    // Grow sequential index buffer only when needed
-    if (NVerts > EntityIdxCache.Num())
-    {
-        const int32 OldNum = EntityIdxCache.Num();
-        EntityIdxCache.SetNumUninitialized(NVerts, EAllowShrinking::No);
-        for (int32 i = OldNum; i < NVerts; ++i) EntityIdxCache[i] = i;
-    }
-
-    FBox Bounds(EForceInit::ForceInitToZero);
-    for (int32 v = 0; v < NVerts; ++v)
-    {
-        Bounds += EntityVertCache[v].Position;
-    }
-
-    FProcMeshSection Section;
-    Section.ProcVertexBuffer = EntityVertCache;
-    Section.ProcIndexBuffer.SetNumUninitialized(NVerts, EAllowShrinking::No);
-    FMemory::Memcpy(Section.ProcIndexBuffer.GetData(), EntityIdxCache.GetData(), NVerts * sizeof(int32));
-    Section.SectionLocalBox  = Bounds;
-    Section.bEnableCollision = false;
-    Section.bSectionVisible  = true;
-
-    EntityMesh->SetProcMeshSection(0, MoveTemp(Section));
-
-    UMaterialInterface* Mat = ZoneMaterialDynamic ? ZoneMaterialDynamic.Get() : ZoneMaterial.Get();
-    if (Mat) EntityMesh->SetMaterial(0, Mat);
+    UploadSection(EntityMesh, 0, EntityOpaqueVertCache, EntityOpaqueIdxCache, OpaqueMat);
+    UploadSection(EntityMesh, 1, EntityAlphaVertCache,  EntityAlphaIdxCache,  AlphaMat);
 }
