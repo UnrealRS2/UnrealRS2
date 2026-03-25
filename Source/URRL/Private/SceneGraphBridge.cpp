@@ -101,6 +101,10 @@ bool FSceneGraphBridge::PollZone(FZonePacket& Out)
     Out.LevelOffsets[1] = *reinterpret_cast<const int32*>(Slot + SLOT_OFF_LO1);
     Out.LevelOffsets[2] = *reinterpret_cast<const int32*>(Slot + SLOT_OFF_LO2);
     Out.LevelOffsets[3] = *reinterpret_cast<const int32*>(Slot + SLOT_OFF_LO3);
+    Out.AlphaLevelOffsets[0] = *reinterpret_cast<const int32*>(Slot + SLOT_OFF_ALO0);
+    Out.AlphaLevelOffsets[1] = *reinterpret_cast<const int32*>(Slot + SLOT_OFF_ALO1);
+    Out.AlphaLevelOffsets[2] = *reinterpret_cast<const int32*>(Slot + SLOT_OFF_ALO2);
+    Out.AlphaLevelOffsets[3] = *reinterpret_cast<const int32*>(Slot + SLOT_OFF_ALO3);
 
     UE_LOG(LogTemp, Log, TEXT("SceneGraphBridge: slot[%u] cmd=%d zone(%d,%d) opaque=%d alpha=%d"),
         SlotIdx, Out.Command, Out.ZoneX, Out.ZoneZ, Out.OpaqueIntCount, Out.AlphaIntCount);
@@ -111,7 +115,8 @@ bool FSceneGraphBridge::PollZone(FZonePacket& Out)
     Out.AlphaIntCount  = FMath::Min(Out.AlphaIntCount,  MaxSlotDataInts - Out.OpaqueIntCount);
     for (int i = 0; i < 4; ++i)
     {
-        Out.LevelOffsets[i] = FMath::Clamp(Out.LevelOffsets[i], 0, Out.OpaqueIntCount);
+        Out.LevelOffsets[i]      = FMath::Clamp(Out.LevelOffsets[i],      0, Out.OpaqueIntCount);
+        Out.AlphaLevelOffsets[i] = FMath::Clamp(Out.AlphaLevelOffsets[i], 0, Out.AlphaIntCount);
     }
 
     const int32 TotalInts = Out.OpaqueIntCount + Out.AlphaIntCount;

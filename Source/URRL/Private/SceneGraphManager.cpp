@@ -121,7 +121,9 @@ void ASceneGraphManager::Tick(float DeltaSeconds)
                 {
                     for (int32 Plane = 1; Plane <= 3; ++Plane)
                     {
-                        Mesh->SetMeshSectionVisible(Plane, !bHideRoofs || Plane <= PlayerPlane);
+                        const bool bVisible = !bHideRoofs || Plane <= PlayerPlane;
+                        Mesh->SetMeshSectionVisible(Plane,     bVisible);  // opaque plane
+                        Mesh->SetMeshSectionVisible(Plane + 4, bVisible);  // alpha plane
                     }
                 }
             }
@@ -421,7 +423,9 @@ void ASceneGraphManager::TryUploadTextures()
         ApplyMaterialParams(ZoneMaterialDynamic);
 
         for (auto& Pair : ZoneMeshes)
-            if (Pair.Value) Pair.Value->SetMaterial(0, ZoneMaterialDynamic);
+            if (Pair.Value)
+                for (int32 i = 0; i <= 3; ++i)
+                    Pair.Value->SetMaterial(i, ZoneMaterialDynamic);
     }
 
     if (ZoneAlphaMaterial)
@@ -430,7 +434,9 @@ void ASceneGraphManager::TryUploadTextures()
         ApplyMaterialParams(ZoneAlphaMaterialDynamic);
 
         for (auto& Pair : ZoneMeshes)
-            if (Pair.Value) Pair.Value->SetMaterial(1, ZoneAlphaMaterialDynamic);
+            if (Pair.Value)
+                for (int32 i = 4; i <= 7; ++i)
+                    Pair.Value->SetMaterial(i, ZoneAlphaMaterialDynamic);
     }
 
     UE_LOG(LogTemp, Log, TEXT("SceneGraphManager: materials applied to %d zones"), ZoneMeshes.Num());
@@ -489,11 +495,23 @@ void ASceneGraphManager::ProcessZoneData(const FZonePacket& Packet)
         PlaneStart = PlaneEnd;
     }
 
-    // Section 4 — alpha (translucent) geometry
-    if (Packet.AlphaIntCount >= 5)
+    // Sections 4-7 — alpha (translucent) geometry per plane, same visibility logic as opaque sections 0-3
+    int32 AlphaPlaneStart = 0;
+    for (int32 Plane = 0; Plane <= 3; ++Plane)
     {
-        Mesh->SetProcMeshSection(4, BuildSection(Data + Packet.OpaqueIntCount, Packet.AlphaIntCount));
-        if (AlphaMat) Mesh->SetMaterial(4, AlphaMat);
+        const int32 AlphaPlaneEnd  = Packet.AlphaLevelOffsets[Plane];
+        const int32 AlphaPlaneInts = AlphaPlaneEnd - AlphaPlaneStart;
+        if (AlphaPlaneInts >= 5)
+        {
+            Mesh->SetProcMeshSection(4 + Plane, BuildSection(Data + Packet.OpaqueIntCount + AlphaPlaneStart, AlphaPlaneInts));
+            if (AlphaMat) Mesh->SetMaterial(4 + Plane, AlphaMat);
+            Mesh->SetMeshSectionVisible(4 + Plane, !bHideRoofs || Plane <= PlayerPlane);
+        }
+        else
+        {
+            Mesh->ClearMeshSection(4 + Plane);
+        }
+        AlphaPlaneStart = AlphaPlaneEnd;
     }
 }
 
