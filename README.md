@@ -1,4 +1,4 @@
-﻿# URRL — Unreal RuneLite Frontend (WIP)
+﻿# URRL — Unreal x RuneLite (WIP)
 
 URRL is a work-in-progress Unreal Engine 5.7.4 frontend for RuneLite (only gpu plugin modified)  
 see: https://github.com/UnrealRS2/runelite  
