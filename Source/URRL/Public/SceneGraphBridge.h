@@ -22,7 +22,11 @@
 //   [8]  zone_z           (int32)
 //   [12] opaque_int_count (int32) — number of int32s of opaque vertex data
 //   [16] alpha_int_count  (int32) — number of int32s of alpha vertex data
-//   [20] data[]           — opaque ints then alpha ints (5 ints per vertex)
+//   [20] level_offset_0   (int32) — int index of end of plane-0 geometry
+//   [24] level_offset_1   (int32) — int index of end of plane-1 geometry
+//   [28] level_offset_2   (int32) — int index of end of plane-2 geometry
+//   [32] level_offset_3   (int32) — int index of end of plane-3 (== opaque_int_count)
+//   [36] data[]           — opaque ints then alpha ints (5 ints per vertex)
 //
 // Vertex encoding (put22224 + put2222 from GpuIntBuffer):
 //   data[i+0] = (lh << 16) | (lx & 0xffff)  → local height + local x
@@ -75,7 +79,9 @@ static constexpr int SCENE_SLOTS_BASE       = 16;  // first slot starts here
 static constexpr uint32_t SCENE_FLAG_PASSTHROUGH = 1u;  // skip GL rendering in RuneLite
 
 // Java→UE flags (written to SCENE_OFF_JAVA_FLAGS)
-static constexpr uint32_t JAVA_FLAG_HIDE_ROOFS   = 1u;  // truncate zones at roof boundary
+//   bit 0       = HIDE_ROOFS: show only planes <= player plane
+//   bits [2:1]  = player plane (0-3), valid when HIDE_ROOFS is set
+static constexpr uint32_t JAVA_FLAG_HIDE_ROOFS   = 1u;
 
 // Per-slot offsets (relative to each slot's base)
 static constexpr int SLOT_OFF_COMMAND       = 0;
@@ -83,8 +89,11 @@ static constexpr int SLOT_OFF_ZONE_X        = 4;
 static constexpr int SLOT_OFF_ZONE_Z        = 8;
 static constexpr int SLOT_OFF_OPAQUE_COUNT  = 12;
 static constexpr int SLOT_OFF_ALPHA_COUNT   = 16;
-static constexpr int SLOT_OFF_ROOF_OFFSET   = 20;  // int32: ints before roof data; == opaque_count if no roof
-static constexpr int SLOT_OFF_DATA          = 24;  // opaque ints then alpha ints
+static constexpr int SLOT_OFF_LO0           = 20;  // int32: end of plane-0 geometry
+static constexpr int SLOT_OFF_LO1           = 24;  // int32: end of plane-1 geometry
+static constexpr int SLOT_OFF_LO2           = 28;  // int32: end of plane-2 geometry
+static constexpr int SLOT_OFF_LO3           = 32;  // int32: end of plane-3 (== opaque_count)
+static constexpr int SLOT_OFF_DATA          = 36;  // opaque ints then alpha ints
 
 static constexpr uint8_t SCENE_CMD_ZONE_DATA    = 1;
 static constexpr uint8_t SCENE_CMD_ZONE_CLEAR   = 2;
@@ -108,8 +117,8 @@ struct FZonePacket
     int32  ZoneZ;
     int32  OpaqueIntCount;
     int32  AlphaIntCount;
-    int32  RoofOffset;    // ints into opaque data where roof geometry starts; == OpaqueIntCount if none
-    TArray<int32> Data;   // copied out of shared memory before advancing read_head
+    int32  LevelOffsets[4]; // end of plane-0,1,2,3 data; LevelOffsets[3] == OpaqueIntCount
+    TArray<int32> Data;     // copied out of shared memory before advancing read_head
 };
 
 class FSceneGraphBridge

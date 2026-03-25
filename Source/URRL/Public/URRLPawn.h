@@ -33,7 +33,7 @@ public:
 
 	/** When true, WASD + mouse controls the camera instead of syncing from RuneLite. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Free Roam")
-	bool bFreeRoam = true;
+	bool bFreeRoam = false;
 
 	/** Movement speed in UE cm/s while in free roam. */
 	UPROPERTY(EditAnywhere, Category="Free Roam")

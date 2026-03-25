@@ -88,14 +88,30 @@ void AURRLPawn::Tick(float DeltaTime)
 	{
 		const RLCameraStatus& C = *FSharedMemoryBridge::RLCameraStatusPtr;
 
-		// RS scene coords → UE: -X=east, Y=north, Z=up (X and height both negated)
-		FVector NewLocation(-C.x * RS_TO_UE_SCALE, C.z * RS_TO_UE_SCALE, -C.y * RS_TO_UE_SCALE);
+		// Shim sends (getCameraX, getCameraZ, getCameraY) → struct (x, y, z).
+		// So C.y = RS south (Z), C.z = RS height (Y).
+		// Height is negated to match tile/entity convention (-lh, -wy → positive UE Z).
+		FVector NewLocation(-C.x * RS_TO_UE_SCALE, C.y * RS_TO_UE_SCALE, -C.z * RS_TO_UE_SCALE);
 
-		float PitchDegrees = C.pitch * (360.f / 2048.f);
-		float YawDegrees   = C.yaw   * (360.f / 2048.f);
+		// Note: shim struct field names are swapped — C.pitch stores RS yaw, C.yaw stores RS pitch.
+		const float RsYawDeg   = C.pitch * (360.f / 2048.f);
+		const float RsPitchDeg = C.yaw   * (360.f / 2048.f);
+
+		// RS pitch increases looking downward → negate for UE (positive = up).
+		// RS yaw 0 = south (+Y in UE), UE yaw 0 = +X → add 90° offset.
+		// RS zoom (scale) → horizontal FOV: fov_x = 2 * atan(viewportW / (2 * scale))
+		// Uses client.getViewportWidth/Height() (the actual 3D projection dimensions),
+		// not the framebuffer buffer dimensions which can differ in stretched/HiDPI modes.
+		const float Zoom = FMath::Max(1.f, static_cast<float>(C.scale)) * 0.57f; // tweak this
+
+		const float fovX = 2.f * FMath::Atan(static_cast<float>(C.viewportW) / (2.f * Zoom));
+		const float aspect = static_cast<float>(C.viewportW) / static_cast<float>(C.viewportH);
+		const float fovY = 2.f * FMath::Atan(FMath::Tan(fovX * 0.5f) / aspect);
+
+		Camera->FieldOfView = FMath::RadiansToDegrees(fovY);
 
 		Camera->SetWorldLocation(NewLocation);
-		Camera->SetWorldRotation(FRotator(YawDegrees, PitchDegrees, 0.f));
+		Camera->SetWorldRotation(FRotator(-RsPitchDeg, 90.f - RsYawDeg, 0.f));
 	}
 }
 

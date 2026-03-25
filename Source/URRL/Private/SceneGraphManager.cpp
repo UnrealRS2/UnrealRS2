@@ -105,17 +105,24 @@ void ASceneGraphManager::Tick(float DeltaSeconds)
             ZoneAlphaMaterialDynamic->SetScalarParameterValue(TEXT("StaticLighting"), NewVal);
     }
 
-    // Read Java→UE hide-roofs flag and toggle roof sections if it changed
+    // Read Java→UE flags: bit 0 = hide roofs, bits [2:1] = player plane
     {
-        const bool bNewHideRoofs = (FSceneGraphBridge::Instance.ReadJavaFlags() & JAVA_FLAG_HIDE_ROOFS) != 0;
-        if (bNewHideRoofs != bHideRoofs)
+        const uint32_t JavaFlags  = FSceneGraphBridge::Instance.ReadJavaFlags();
+        const bool bNewHideRoofs  = (JavaFlags & JAVA_FLAG_HIDE_ROOFS) != 0;
+        const int32 NewPlayerPlane = bNewHideRoofs ? static_cast<int32>((JavaFlags >> 1) & 3) : 3;
+
+        if (bNewHideRoofs != bHideRoofs || NewPlayerPlane != PlayerPlane)
         {
-            bHideRoofs = bNewHideRoofs;
-            for (int64 Key : ZoneRoofKeys)
+            bHideRoofs  = bNewHideRoofs;
+            PlayerPlane = NewPlayerPlane;
+            for (auto& Pair : ZoneMeshes)
             {
-                if (UProceduralMeshComponent** Found = ZoneMeshes.Find(Key))
+                if (UProceduralMeshComponent* Mesh = Pair.Value)
                 {
-                    (*Found)->SetMeshSectionVisible(1, !bHideRoofs);
+                    for (int32 Plane = 1; Plane <= 3; ++Plane)
+                    {
+                        Mesh->SetMeshSectionVisible(Plane, !bHideRoofs || Plane <= PlayerPlane);
+                    }
                 }
             }
         }
@@ -244,7 +251,7 @@ static FVector DecodePosition(const int32_t* Data)
  *   UV1 – (tt, tf)                  1-based texture ID + flags
  *   UV2 – (bias, vertAlpha)         depth bias (0-255) + vertex opacity (0-1)
  */
-FProcMeshSection ASceneGraphManager::BuildSection(const int32_t* Data, int32 IntCount, bool bSuppressAnim)
+FProcMeshSection ASceneGraphManager::BuildSection(const int32_t* Data, int32 IntCount)
 {
     FProcMeshSection Section;
 
@@ -271,8 +278,8 @@ FProcMeshSection ASceneGraphManager::BuildSection(const int32_t* Data, int32 Int
         const float tv = static_cast<float>(static_cast<int16_t>(VD[4] & 0xffff));
         Vert.UV0 = FVector2D(tu / 256.f, tv / 256.f);
 
-        // UV1 – texture ID (1-based) + flags (UV1.y=1 suppresses animation)
-        const float tf = bSuppressAnim ? 1.f : float((static_cast<uint32_t>(VD[4]) >> 16) & 0xffff);
+        // UV1 – texture ID (1-based) + flags (UV1.y=1 suppresses animation; set by Java per-face)
+        const float tf = float((static_cast<uint32_t>(VD[4]) >> 16) & 0xffff);
         Vert.UV1 = FVector2D(float(VD[3] & 0xffff), tf);
 
         // UV2 – depth bias (bits 23-16) + vertex alpha (bits 31-24)
@@ -462,42 +469,37 @@ void ASceneGraphManager::ProcessZoneData(const FZonePacket& Packet)
     UMaterialInterface* Mat      = ZoneMaterialDynamic      ? ZoneMaterialDynamic.Get()      : ZoneMaterial.Get();
     UMaterialInterface* AlphaMat = ZoneAlphaMaterialDynamic ? ZoneAlphaMaterialDynamic.Get() : ZoneAlphaMaterial.Get();
 
-    // Section 0 — ground-level opaque geometry (0..RoofOffset)
-    const int32 GroundInts = Packet.RoofOffset;
-    if (GroundInts >= 5)
+    // Sections 0-3 — one per OSRS plane.  Section n is visible if !bHideRoofs || n <= PlayerPlane.
+    // LevelOffsets[n] = int index of the end of plane-n geometry in the opaque buffer.
+    int32 PlaneStart = 0;
+    for (int32 Plane = 0; Plane <= 3; ++Plane)
     {
-        Mesh->SetProcMeshSection(0, BuildSection(Data, GroundInts));
-        if (Mat) Mesh->SetMaterial(0, Mat);
+        const int32 PlaneEnd  = Packet.LevelOffsets[Plane];
+        const int32 PlaneInts = PlaneEnd - PlaneStart;
+        if (PlaneInts >= 5)
+        {
+            Mesh->SetProcMeshSection(Plane, BuildSection(Data + PlaneStart, PlaneInts));
+            if (Mat) Mesh->SetMaterial(Plane, Mat);
+            Mesh->SetMeshSectionVisible(Plane, !bHideRoofs || Plane <= PlayerPlane);
+        }
+        else
+        {
+            Mesh->ClearMeshSection(Plane);
+        }
+        PlaneStart = PlaneEnd;
     }
 
-    // Section 1 — roof / upper-floor opaque geometry (RoofOffset..OpaqueIntCount)
-    const int32 RoofInts = Packet.OpaqueIntCount - Packet.RoofOffset;
-    if (RoofInts >= 5)
-    {
-        Mesh->SetProcMeshSection(1, BuildSection(Data + GroundInts, RoofInts, /*bSuppressAnim=*/true));
-        if (Mat) Mesh->SetMaterial(1, Mat);
-        Mesh->SetMeshSectionVisible(1, !bHideRoofs);
-        ZoneRoofKeys.Add(Key);
-    }
-    else
-    {
-        // No roof data — clear any stale section from a previous upload and remove from set
-        Mesh->ClearMeshSection(1);
-        ZoneRoofKeys.Remove(Key);
-    }
-
-    // Section 2 — alpha (translucent) geometry
+    // Section 4 — alpha (translucent) geometry
     if (Packet.AlphaIntCount >= 5)
     {
-        Mesh->SetProcMeshSection(2, BuildSection(Data + Packet.OpaqueIntCount, Packet.AlphaIntCount));
-        if (AlphaMat) Mesh->SetMaterial(2, AlphaMat);
+        Mesh->SetProcMeshSection(4, BuildSection(Data + Packet.OpaqueIntCount, Packet.AlphaIntCount));
+        if (AlphaMat) Mesh->SetMaterial(4, AlphaMat);
     }
 }
 
 void ASceneGraphManager::ProcessZoneClear(int32 ZoneX, int32 ZoneZ)
 {
     const int64 Key = ZoneKey(ZoneX, ZoneZ);
-    ZoneRoofKeys.Remove(Key);
     if (UProceduralMeshComponent** Found = ZoneMeshes.Find(Key))
     {
         (*Found)->ClearAllMeshSections();
@@ -508,7 +510,6 @@ void ASceneGraphManager::ProcessZoneClear(int32 ZoneX, int32 ZoneZ)
 
 void ASceneGraphManager::ProcessSceneClear()
 {
-    ZoneRoofKeys.Empty();
     for (auto& Pair : ZoneMeshes)
     {
         if (Pair.Value)

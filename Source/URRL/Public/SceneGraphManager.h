@@ -15,9 +15,9 @@
  * ASceneGraphManager – polls the "URRL_Scene" shared memory each tick and
  * materialises RuneLite zone geometry as UProceduralMeshComponents.
  *
- * Each zone gets one ProceduralMeshComponent with two sections:
- *   Section 0 – opaque geometry  (Masked material,      M_RSZone)
- *   Section 1 – alpha geometry   (Translucent material, M_RSZoneAlpha)
+ * Each zone gets one ProceduralMeshComponent with up to 5 sections:
+ *   Sections 0-3 – opaque geometry per plane (Masked material, M_RSZone)
+ *   Section  4   – alpha geometry            (Translucent material, M_RSZoneAlpha)
  *
  * Vertex UV channels:
  *   UV0 – texture coords (tu/256, tv/256)
@@ -63,13 +63,12 @@ private:
     UPROPERTY()
     TObjectPtr<UTexture2D> AnimSpeedsTexture;
 
-/** Zone keys that have a roof section (section 1) built. Used for fast visibility toggle. */
-    TSet<int64> ZoneRoofKeys;
-
     bool  bTexturesUploaded    = false;
     bool  bLastBridgeReady     = false;
     float CachedStaticLighting = -1.f;
     bool  bHideRoofs           = false;
+    /** Highest plane visible when bHideRoofs=true. Planes above this are hidden. */
+    int32 PlayerPlane          = 3;
 
     void TryUploadTextures();
     void ApplyMaterialParams(UMaterialInstanceDynamic* MID);
@@ -77,9 +76,8 @@ private:
     void ProcessZoneData(const struct FZonePacket& Packet);
     void ProcessSceneClear();
     void ProcessZoneClear(int32 ZoneX, int32 ZoneZ);
-    /** Zone geometry: 5 ints/vertex, packed 16-bit integer local positions.
-     *  bSuppressAnim=true forces UV1.y=1 on all vertices (suppresses texture animation). */
-    static FProcMeshSection BuildSection(const int32_t* Data, int32 IntCount, bool bSuppressAnim = false);
+    /** Zone geometry: 5 ints/vertex, packed 16-bit integer local positions. */
+    static FProcMeshSection BuildSection(const int32_t* Data, int32 IntCount);
 
     static int64 ZoneKey(int32 X, int32 Z) { return (static_cast<int64>(X) << 32) | static_cast<uint32>(Z); }
 

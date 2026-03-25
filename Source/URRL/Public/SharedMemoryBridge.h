@@ -14,6 +14,7 @@ struct RLCameraStatus
 {
     int x, y, z;
     int pitch, yaw, scale;
+    int viewportW, viewportH;
 };
 struct RLFrameBuffer
 {
