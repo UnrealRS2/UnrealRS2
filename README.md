@@ -1,34 +1,26 @@
 ﻿# URRL — Unreal RuneLite Frontend (WIP)
 
-URRL is a work-in-progress Unreal Engine 5.6.1 frontend for RuneLite.  
-It communicates through a shared memory region to sync data in real time.  
-see: https://github.com/UnrealRS2/rl-gpushared-shim
+URRL is a work-in-progress Unreal Engine 5.7.4 frontend for RuneLite (only gpu plugin modified)  
+see: https://github.com/UnrealRS2/runelite  
+It communicates through a shared RAM block to sync data in real time.  
+see: bundled under ./rl-gpushared-shim
 
-![0pmStEXGDZ](https://github.com/user-attachments/assets/f5880cc6-eb47-4150-a84c-96ab184da0af)
-
-## Shared Memory Sync
-
-### RuneLite → Unreal
-- Camera position & rotation
-- Framebuffer (game frame, UI, overlays)
-
-### Unreal → RuneLite
-- Resolution updates
-- Mouse move / press / release
+<img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/b29c2cfc-5d27-429c-86e7-f397a52039de" />
+<img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/f6098fcd-5534-4991-a4fb-e51cee131d81" />
 
 ## Status
-UI / Overlays are forwarded to unreal  
-(Captures 4K frames at 120FPS with reasonable hardware.)  
-  
-**No scene graph forwarding to unreal**
-  
-**Partial input forwarding to runelite**
+UI / Overlays forwarded to unreal  
+(Captures 4K/120FPS with reasonable hardware.)  
+Scene Graph forwarded to unreal  
+Textures / Animations  
+
+There are some minor bugs but this is still WIP, and not ready for end users.  
 
 ## Goal
-A modern Unreal-based frontend for RuneLite with real-time camera and framebuffer sync.
+A modern Unreal-based frontend for RuneLite with real-time scene graph / camera / input sync
 
 ## Building
-Setup your windows environment for Unreal 5.6.1  
+Setup your windows environment for Unreal 5.7.4
 Build the Game configuration using Visual Studio 2022  
 Cook the content using Unreal
 
