@@ -6,6 +6,7 @@
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/Texture2DArray.h"
+#include "Engine/Texture2D.h"
 #include "ProceduralMeshComponent.h"
 #include "Async/Future.h"
 #include "SceneGraphManager.generated.h"
@@ -58,10 +59,15 @@ private:
     UPROPERTY()
     TObjectPtr<UTexture2DArray> ZoneTextureArray;
 
-    /** Zone keys that have a roof section (section 1) built. Used for fast visibility toggle. */
+    /** 256×1 RGBA16F lookup: texel[id] = (animU, animV) pre-scaled to UV-units/sec. */
+    UPROPERTY()
+    TObjectPtr<UTexture2D> AnimSpeedsTexture;
+
+/** Zone keys that have a roof section (section 1) built. Used for fast visibility toggle. */
     TSet<int64> ZoneRoofKeys;
 
     bool  bTexturesUploaded    = false;
+    bool  bLastBridgeReady     = false;
     float CachedStaticLighting = -1.f;
     bool  bHideRoofs           = false;
 
@@ -71,8 +77,9 @@ private:
     void ProcessZoneData(const struct FZonePacket& Packet);
     void ProcessSceneClear();
     void ProcessZoneClear(int32 ZoneX, int32 ZoneZ);
-    /** Zone geometry: 5 ints/vertex, packed 16-bit integer local positions. */
-    static FProcMeshSection BuildSection(const int32_t* Data, int32 IntCount);
+    /** Zone geometry: 5 ints/vertex, packed 16-bit integer local positions.
+     *  bSuppressAnim=true forces UV1.y=1 on all vertices (suppresses texture animation). */
+    static FProcMeshSection BuildSection(const int32_t* Data, int32 IntCount, bool bSuppressAnim = false);
 
     static int64 ZoneKey(int32 X, int32 Z) { return (static_cast<int64>(X) << 32) | static_cast<uint32>(Z); }
 

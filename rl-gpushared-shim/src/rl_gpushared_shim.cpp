@@ -265,7 +265,7 @@ JNIEXPORT jobject JNICALL Java_net_runelite_client_plugins_gpushared_shim_SceneG
 
 static HANDLE   gTexMapHandle = nullptr;
 static uint8_t *gTexBase      = nullptr;
-static const DWORD TEX_SHM_SIZE = 8 + 256 * 128 * 128 * 4; // ~16 MB
+static const DWORD TEX_SHM_SIZE = 8 + 256 * 128 * 128 * 4 + 256 * 2 * 4; // ~16 MB pixel data + 2 KB anim speeds
 
 JNIEXPORT jlong JNICALL Java_net_runelite_client_plugins_gpushared_shim_TextureBridge_openTextureMemory
 (JNIEnv *env, jobject, jstring name) {

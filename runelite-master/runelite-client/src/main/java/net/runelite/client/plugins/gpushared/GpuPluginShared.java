@@ -295,6 +295,15 @@ public class GpuPluginShared extends Plugin implements DrawCallbacks
         mapUploader = new SceneUploader(renderCallbackManager);
         facePrioritySorter = new FacePrioritySorter(clientUploader);
 
+        // Object IDs whose texture animation should be suppressed.
+        // Add IDs here for objects that use animated texture IDs but should not animate visually.
+        java.util.Set<Integer> suppressIds = new java.util.HashSet<>(java.util.Arrays.asList(
+            298,299,300, // Hay objects
+            1276, 1278, 10820 // Trees
+        ));
+        clientUploader.suppressAnimObjectIds.addAll(suppressIds);
+        mapUploader.suppressAnimObjectIds.addAll(suppressIds);
+
         SceneUploader.ZoneUploadListener zoneListener = (mzx, mzz, zone, opaqueVb, alphaVb) ->
         {
             java.nio.IntBuffer ob = opaqueVb != null ? opaqueVb.getBuffer() : null;

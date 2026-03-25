@@ -74,6 +74,14 @@ void ASceneGraphManager::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
 
+    const bool bBridgeReady = FTextureBridge::Instance.IsReady();
+    if (bBridgeReady && !bLastBridgeReady)
+    {
+        // Rising edge: Java just finished writing — always re-upload
+        UE_LOG(LogTemp, Log, TEXT("SceneGraphManager: texture bridge ready signal detected, re-uploading"));
+        bTexturesUploaded = false;
+    }
+    bLastBridgeReady = bBridgeReady;
     if (!bTexturesUploaded)
     {
         TryUploadTextures();
@@ -236,7 +244,7 @@ static FVector DecodePosition(const int32_t* Data)
  *   UV1 – (tt, tf)                  1-based texture ID + flags
  *   UV2 – (bias, vertAlpha)         depth bias (0-255) + vertex opacity (0-1)
  */
-FProcMeshSection ASceneGraphManager::BuildSection(const int32_t* Data, int32 IntCount)
+FProcMeshSection ASceneGraphManager::BuildSection(const int32_t* Data, int32 IntCount, bool bSuppressAnim)
 {
     FProcMeshSection Section;
 
@@ -263,10 +271,9 @@ FProcMeshSection ASceneGraphManager::BuildSection(const int32_t* Data, int32 Int
         const float tv = static_cast<float>(static_cast<int16_t>(VD[4] & 0xffff));
         Vert.UV0 = FVector2D(tu / 256.f, tv / 256.f);
 
-        // UV1 – texture ID (1-based) + flags
-        Vert.UV1 = FVector2D(
-            float(VD[3] & 0xffff),
-            float((static_cast<uint32_t>(VD[4]) >> 16) & 0xffff));
+        // UV1 – texture ID (1-based) + flags (UV1.y=1 suppresses animation)
+        const float tf = bSuppressAnim ? 1.f : float((static_cast<uint32_t>(VD[4]) >> 16) & 0xffff);
+        Vert.UV1 = FVector2D(float(VD[3] & 0xffff), tf);
 
         // UV2 – depth bias (bits 23-16) + vertex alpha (bits 31-24)
         // bias:      0-255, used for Pixel Depth Offset in material
@@ -315,6 +322,7 @@ void ASceneGraphManager::ApplyMaterialParams(UMaterialInstanceDynamic* MID)
 {
     if (!MID) return;
     MID->SetTextureParameterValue(TEXT("TextureArray"), ZoneTextureArray);
+    MID->SetTextureParameterValue(TEXT("AnimSpeeds"),   AnimSpeedsTexture);
     MID->SetScalarParameterValue(TEXT("StaticLighting"), CachedStaticLighting);
 }
 
@@ -354,6 +362,49 @@ void ASceneGraphManager::TryUploadTextures()
 
     UE_LOG(LogTemp, Log, TEXT("SceneGraphManager: uploaded %u×%u×%u texture array"),
         TEX_SIZE, TEX_SIZE, TEX_COUNT);
+
+    // Build 256×1 RGBA16F animation speeds lookup texture.
+    // texel[id].rg = (animU, animV) pre-scaled to UV-units/sec.
+    // Material formula:  UV += Time * Texture2DSample(AnimSpeeds, texID).rg
+    {
+        const float* AnimSpeeds = FTextureBridge::Instance.GetAnimSpeedData();
+
+        FTexturePlatformData* AnimPD = new FTexturePlatformData();
+        AnimPD->SizeX        = (int32)TEX_COUNT;
+        AnimPD->SizeY        = 1;
+        AnimPD->SetNumSlices(1);
+        AnimPD->PixelFormat  = PF_FloatRGBA; // RGBA16F
+
+        const int32 AnimMipBytes = (int32)(TEX_COUNT * 4 * sizeof(uint16)); // 4 channels × uint16
+        FTexture2DMipMap* AnimMip = new FTexture2DMipMap((int32)TEX_COUNT, 1);
+        AnimPD->Mips.Add(AnimMip);
+        AnimMip->BulkData.Lock(LOCK_READ_WRITE);
+        uint16* AnimDst = reinterpret_cast<uint16*>(AnimMip->BulkData.Realloc(AnimMipBytes));
+
+        for (int32 i = 0; i < (int32)TEX_COUNT; ++i)
+        {
+            const float u = AnimSpeeds ? AnimSpeeds[i * 2 + 0] : 0.f;
+            const float v = AnimSpeeds ? AnimSpeeds[i * 2 + 1] : 0.f;
+            // Pack as float16 (FFloat16)
+            AnimDst[i * 4 + 0] = FFloat16(u).Encoded;
+            AnimDst[i * 4 + 1] = FFloat16(v).Encoded;
+            AnimDst[i * 4 + 2] = 0;
+            AnimDst[i * 4 + 3] = 0;
+        }
+        AnimMip->BulkData.Unlock();
+
+        AnimSpeedsTexture = NewObject<UTexture2D>(this, NAME_None, RF_Transient);
+        AnimSpeedsTexture->Filter      = TF_Nearest;
+        AnimSpeedsTexture->AddressX    = TA_Wrap;
+        AnimSpeedsTexture->AddressY    = TA_Wrap;
+        AnimSpeedsTexture->SRGB        = false;
+        AnimSpeedsTexture->NeverStream = true;
+        AnimSpeedsTexture->SetPlatformData(AnimPD);
+        AnimSpeedsTexture->UpdateResource();
+
+        UE_LOG(LogTemp, Log, TEXT("SceneGraphManager: built AnimSpeeds lookup texture (%u texels)"), TEX_COUNT);
+    }
+
 
     CachedStaticLighting = (float)CVarStaticLighting.GetValueOnGameThread();
 
@@ -423,7 +474,7 @@ void ASceneGraphManager::ProcessZoneData(const FZonePacket& Packet)
     const int32 RoofInts = Packet.OpaqueIntCount - Packet.RoofOffset;
     if (RoofInts >= 5)
     {
-        Mesh->SetProcMeshSection(1, BuildSection(Data + GroundInts, RoofInts));
+        Mesh->SetProcMeshSection(1, BuildSection(Data + GroundInts, RoofInts, /*bSuppressAnim=*/true));
         if (Mat) Mesh->SetMaterial(1, Mat);
         Mesh->SetMeshSectionVisible(1, !bHideRoofs);
         ZoneRoofKeys.Add(Key);

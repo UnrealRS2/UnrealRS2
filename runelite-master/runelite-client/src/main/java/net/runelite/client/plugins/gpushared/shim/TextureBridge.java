@@ -7,13 +7,16 @@ import net.runelite.api.Texture;
 import net.runelite.api.TextureProvider;
 
 /**
- * Writes all 256 RS textures (128×128 RGBA each) into the "URRL_Textures"
- * shared memory region once, so Unreal Engine can create a Texture2DArray.
+ * Writes all 256 RS textures (128×128 RGBA each) plus per-texture animation
+ * speeds into the "URRL_Textures" shared memory region once.
  *
- * Layout (~16 MB):
- *   [0]  ready_flag (uint32) — 0=not ready, 1=all textures written
- *   [4]  pad[4]
- *   [8]  texture[0..255]: each TEXTURE_SIZE*TEXTURE_SIZE*4 bytes RGBA
+ * Layout:
+ *   [0]        ready_flag (uint32) — 0=not ready, 1=all data written
+ *   [4]        pad[4]
+ *   [8]        texture[0..255]: each TEXTURE_SIZE*TEXTURE_SIZE*4 bytes RGBA
+ *   [ANIM_BASE] animSpeeds[0..255]: each 8 bytes — (float animU, float animV)
+ *              Pre-scaled to UV-units-per-second (animSpeed / (128 × 0.6))
+ *              so the UE material can simply do:  UV += Time * sample(AnimSpeeds).rg
  */
 public class TextureBridge
 {
@@ -23,7 +26,9 @@ public class TextureBridge
     private static final int BYTES_PER_TEXTURE = TEXTURE_SIZE * TEXTURE_SIZE * 4;
     private static final int OFF_READY         = 0;
     private static final int DATA_BASE         = 8;
-    public  static final int TOTAL_BYTES       = DATA_BASE + TEXTURE_COUNT * BYTES_PER_TEXTURE;
+    // Animation speeds follow immediately after pixel data (2 floats × 4 bytes × 256 textures = 2 KB)
+    public  static final int ANIM_BASE         = DATA_BASE + TEXTURE_COUNT * BYTES_PER_TEXTURE;
+    public  static final int TOTAL_BYTES       = ANIM_BASE + TEXTURE_COUNT * 2 * 4;
 
     // ── JNI ──────────────────────────────────────────────────────────────────
     public native long       openTextureMemory(String name);
@@ -99,7 +104,36 @@ public class TextureBridge
         }
 
         textureProvider.setBrightness(savedBrightness);
-        VarHandle.releaseFence(); // all texture writes visible before ready flag
+
+        // Write per-texture animation speeds.
+        // Formula matches the GL vertex shader:  UV += float(tick) * animSpeed * (1/128)
+        // where tick increments once per game cycle (0.6 s).
+        // Pre-scale to UV-units-per-second so the UE material just does:
+        //   UV += Time * sample(AnimSpeeds).rg
+        // Scale factor = 1 / (128 × 0.6) ≈ 0.013021
+        final float ANIM_SCALE = 1.0f / (128.0f * 0.6f);
+        for (int id = 0; id < TEXTURE_COUNT; id++)
+        {
+            float u = 0f, v = 0f;
+            if (id < textures.length && textures[id] != null)
+            {
+                switch (textures[id].getAnimationDirection())
+                {
+                    case 1: v = -1f; break;
+                    case 3: v =  1f; break;
+                    case 2: u = -1f; break;
+                    case 4: u =  1f; break;
+                }
+                int speed = textures[id].getAnimationSpeed();
+                u *= speed * ANIM_SCALE;
+                v *= speed * ANIM_SCALE;
+            }
+            int base = ANIM_BASE + id * 8;
+            buf.putFloat(base,     u);
+            buf.putFloat(base + 4, v);
+        }
+
+        VarHandle.releaseFence(); // all writes (pixels + anim speeds) visible before ready flag
         buf.putInt(OFF_READY, 1);
     }
 }

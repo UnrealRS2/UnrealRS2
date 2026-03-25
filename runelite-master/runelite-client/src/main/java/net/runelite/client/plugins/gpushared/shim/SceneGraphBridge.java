@@ -28,8 +28,8 @@ import java.nio.IntBuffer;
  *   int[0] = (lh << 16) | (lx & 0xffff)   (height=lh, local-x=lx)
  *   int[1] = lz & 0xffff                   (local-z)
  *   int[2] = hsl                            (packed HSL color)
- *   int[3] = (tv << 16) | (tu & 0xffff)    (texture UV)
- *   int[4] = (tf << 16) | (tt & 0xffff)    (texture flags/ID)
+ *   int[3] = (tu << 16) | (tt & 0xffff)    (texture U + ID)
+ *   int[4] = (tf << 16) | (tv & 0xffff)    (texture flags + V)
  *
  * Memory ordering:
  *   Java: write slot fields + data, releaseFence(), write write_head
