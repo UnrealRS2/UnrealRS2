@@ -15,15 +15,18 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
-	// Mouse buttons (forwarded to RuneLite)
+	// Mouse buttons + scroll (forwarded to RuneLite)
 	void OnLeftClick();
 	void OnLeftRelease();
 	void OnRightClick();
 	void OnRightRelease();
 	void OnMidClick();
 	void OnMidRelease();
+	void OnScrollUp();
+	void OnScrollDown();
 
 public:
 	virtual void Tick(float DeltaTime) override;
@@ -46,4 +49,7 @@ public:
 private:
 	FVector  FreeRoamLocation;
 	FRotator FreeRoamRotation;
+
+	// Keyboard forwarder (Slate input pre-processor)
+	TSharedPtr<class FKeyForwarder> KeyForwarder;
 };

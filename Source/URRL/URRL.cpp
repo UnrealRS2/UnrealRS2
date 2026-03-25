@@ -17,12 +17,15 @@
 FSharedMemoryBridge FSharedMemoryBridge::SharedMemoryBridge{};
 FSceneGraphBridge   FSceneGraphBridge::Instance{};
 FTextureBridge      FTextureBridge::Instance{};
-RLCameraStatus* FSharedMemoryBridge::RLCameraStatusPtr;
-RLFrameBuffer* FSharedMemoryBridge::RLFrameBufferPtr;
-SResolution* FSharedMemoryBridge::Resolution;
-SMouseMove* FSharedMemoryBridge::MouseMove;
-SMousePress* FSharedMemoryBridge::MousePress;
-SMouseRelease* FSharedMemoryBridge::MouseRelease;
+void*           FSharedMemoryBridge::Raw             = nullptr;
+RLCameraStatus* FSharedMemoryBridge::RLCameraStatusPtr = nullptr;
+RLFrameBuffer*  FSharedMemoryBridge::RLFrameBufferPtr  = nullptr;
+SResolution*    FSharedMemoryBridge::Resolution        = nullptr;
+SMouseMove*     FSharedMemoryBridge::MouseMove         = nullptr;
+SMousePress*    FSharedMemoryBridge::MousePress        = nullptr;
+SMouseRelease*  FSharedMemoryBridge::MouseRelease      = nullptr;
+SMouseWheel*    FSharedMemoryBridge::MouseWheel        = nullptr;
+SKeyQueue*      FSharedMemoryBridge::KeyQueue          = nullptr;
 URRL_API AURRLHud* AURRLGameMode::URRLHud;
 static FShimTick GCameraTick;
 

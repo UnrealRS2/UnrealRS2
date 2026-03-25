@@ -8,8 +8,6 @@
 #include "URRLPawn.h"
 #include "GameFramework/Pawn.h"
 
-void* FSharedMemoryBridge::Raw = nullptr;
-
 AURRLGameMode::AURRLGameMode()
 {
 	HUDClass = AURRLHud::StaticClass();

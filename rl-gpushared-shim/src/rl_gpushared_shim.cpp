@@ -53,6 +53,24 @@ struct SMouseRelease {
     bool consumed = true;
 };
 
+struct SMouseWheel {
+    int32_t accum;  // positive = scroll down (zoom in), negative = scroll up (zoom out)
+};
+
+struct SKeyEvent {
+    int32_t id;        // 400=KEY_TYPED, 401=KEY_PRESSED, 402=KEY_RELEASED
+    int32_t keyCode;   // Java VK_ code
+    int32_t keyChar;   // Unicode codepoint; 0xFFFF = CHAR_UNDEFINED
+    int32_t modifiers; // Java InputEvent bits: SHIFT=64, CTRL=128, ALT=512
+};
+
+static constexpr int KEY_QUEUE_CAPACITY = 32;
+struct SKeyQueue {
+    int32_t writeHead;
+    int32_t readHead;
+    SKeyEvent events[KEY_QUEUE_CAPACITY];
+};
+
 // Shared region layout (contiguous)
 struct FixedSharedMemoryRegionPOD {
     RLCameraStatus camera{};
@@ -61,6 +79,8 @@ struct FixedSharedMemoryRegionPOD {
     SMouseMove mouse_move;
     SMousePress mouse_press;
     SMouseRelease mouse_release;
+    SMouseWheel mouse_wheel{};
+    SKeyQueue key_queue{};
 };
 #pragma pack(pop)
 
@@ -103,6 +123,14 @@ static inline SMousePress *ptr_mouse_press() {
 static inline SMouseRelease *ptr_mouse_release() {
     shmPtr += sizeof(SMouseRelease);
     return reinterpret_cast<SMouseRelease *>(shmPtr - sizeof(SMouseRelease));
+}
+static inline SMouseWheel *ptr_mouse_wheel() {
+    shmPtr += sizeof(SMouseWheel);
+    return reinterpret_cast<SMouseWheel *>(shmPtr - sizeof(SMouseWheel));
+}
+static inline SKeyQueue *ptr_key_queue() {
+    shmPtr += sizeof(SKeyQueue);
+    return reinterpret_cast<SKeyQueue *>(shmPtr - sizeof(SKeyQueue));
 }
 
 // JNI implementations
@@ -206,6 +234,16 @@ JNIEXPORT jobject JNICALL Java_net_runelite_client_plugins_gpushared_shim_Shared
 (JNIEnv *env, jobject /*this*/, jlong /*handle*/) {
     void *ptr = ptr_mouse_release();
     return env->NewDirectByteBuffer(ptr, sizeof(SMouseRelease));
+}
+JNIEXPORT jobject JNICALL Java_net_runelite_client_plugins_gpushared_shim_SharedMemoryBridge_mapMouseWheel
+(JNIEnv *env, jobject /*this*/, jlong /*handle*/) {
+    void *ptr = ptr_mouse_wheel();
+    return env->NewDirectByteBuffer(ptr, sizeof(SMouseWheel));
+}
+JNIEXPORT jobject JNICALL Java_net_runelite_client_plugins_gpushared_shim_SharedMemoryBridge_mapKeyQueue
+(JNIEnv *env, jobject /*this*/, jlong /*handle*/) {
+    void *ptr = ptr_key_queue();
+    return env->NewDirectByteBuffer(ptr, sizeof(SKeyQueue));
 }
 
 // ─── Scene graph shared memory ───────────────────────────────────────────────

@@ -5,6 +5,105 @@
 #include "Camera/CameraComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Framework/Application/IInputProcessor.h"
+
+// ─── Key forwarder ────────────────────────────────────────────────────────────
+// Intercepts all keyboard events via Slate and pushes them into the SHM key
+// queue so Java/RuneLite can consume them.
+
+static TCHAR GetTypedChar(uint32 Win32VK)
+{
+	BYTE KeyState[256] = {};
+	if (!GetKeyboardState(KeyState)) return 0;
+	WCHAR Buf[4] = {};
+	const int N = ToUnicodeEx(Win32VK,
+	                          MapVirtualKeyW(Win32VK, MAPVK_VK_TO_VSC),
+	                          KeyState, Buf, 4, 0,
+	                          GetKeyboardLayout(0));
+	return (N == 1) ? (TCHAR)Buf[0] : 0;
+}
+
+static int32 Win32ToJavaVK(uint32 Win32VK)
+{
+	switch (Win32VK)
+	{
+		case 0x0D: return 10;   // VK_RETURN  → Java VK_ENTER
+		case 0x2E: return 127;  // VK_DELETE  → Java VK_DELETE
+		default:   return (int32)Win32VK;
+	}
+}
+
+static void EnqueueKey(int32 Id, int32 JavaVK, int32 KeyChar, int32 Mods)
+{
+	SKeyQueue* Q = FSharedMemoryBridge::KeyQueue;
+	if (!Q) return;
+
+	const int32 WH = std::atomic_ref<int32>(Q->writeHead).load(std::memory_order_relaxed);
+	const int32 RH = std::atomic_ref<int32>(Q->readHead ).load(std::memory_order_acquire);
+	if ((WH - RH) >= KEY_QUEUE_CAPACITY) return; // ring full – drop
+
+	SKeyEvent& E = Q->events[WH & (KEY_QUEUE_CAPACITY - 1)];
+	E.id        = Id;
+	E.keyCode   = JavaVK;
+	E.keyChar   = KeyChar;
+	E.modifiers = Mods;
+
+	std::atomic_ref<int32>(Q->writeHead).store(WH + 1, std::memory_order_release);
+}
+
+class FKeyForwarder : public IInputProcessor
+{
+public:
+	virtual void Tick(const float /*DeltaTime*/, FSlateApplication& /*SlateApp*/,
+	                  TSharedRef<ICursor> /*Cursor*/) override {}
+
+	virtual bool HandleKeyDownEvent(FSlateApplication& /*SlateApp*/,
+	                                const FKeyEvent& Evt) override
+	{
+		if (!FSharedMemoryBridge::KeyQueue) return false;
+
+		const int32  Mods   = BuildMods(Evt.GetModifierKeys());
+		const uint32 Win32  = Evt.GetKeyCode();
+		const int32  JavaVK = Win32ToJavaVK(Win32);
+		const TCHAR  Ch     = GetTypedChar(Win32);
+
+		// KEY_PRESSED (401)
+		EnqueueKey(401, JavaVK, 0xFFFF, Mods);
+
+		// KEY_TYPED (400) for printable characters
+		if (Ch >= 0x20 && Ch != 0x7F) // exclude control chars
+		{
+			EnqueueKey(400, 0, (int32)Ch, Mods);
+		}
+
+		return false; // don't consume – UE still needs to process bindings
+	}
+
+	virtual bool HandleKeyUpEvent(FSlateApplication& /*SlateApp*/,
+	                              const FKeyEvent& Evt) override
+	{
+		if (!FSharedMemoryBridge::KeyQueue) return false;
+
+		const int32  Mods   = BuildMods(Evt.GetModifierKeys());
+		const uint32 Win32  = Evt.GetKeyCode();
+		const int32  JavaVK = Win32ToJavaVK(Win32);
+
+		// KEY_RELEASED (402)
+		EnqueueKey(402, JavaVK, 0xFFFF, Mods);
+		return false;
+	}
+
+private:
+	static int32 BuildMods(const FModifierKeysState& M)
+	{
+		int32 Out = 0;
+		if (M.IsShiftDown())   Out |= 64;   // Java InputEvent.SHIFT_MASK
+		if (M.IsControlDown()) Out |= 128;  // Java InputEvent.CTRL_MASK
+		if (M.IsAltDown())     Out |= 512;  // Java InputEvent.ALT_MASK
+		return Out;
+	}
+};
 
 AURRLPawn::AURRLPawn()
 {
@@ -43,6 +142,20 @@ void AURRLPawn::BeginPlay()
 		}
 		EnableInput(PC);
 	}
+
+	// Register keyboard forwarder with Slate so all key events reach RuneLite.
+	KeyForwarder = MakeShared<FKeyForwarder>();
+	FSlateApplication::Get().RegisterInputPreProcessor(KeyForwarder);
+}
+
+void AURRLPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (KeyForwarder && FSlateApplication::IsInitialized())
+	{
+		FSlateApplication::Get().UnregisterInputPreProcessor(KeyForwarder);
+	}
+	KeyForwarder.Reset();
+	Super::EndPlay(EndPlayReason);
 }
 
 void AURRLPawn::Tick(float DeltaTime)
@@ -125,6 +238,8 @@ void AURRLPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 	PlayerInputComponent->BindKey(EKeys::RightMouseButton,  IE_Released, this, &AURRLPawn::OnRightRelease);
 	PlayerInputComponent->BindKey(EKeys::MiddleMouseButton, IE_Pressed,  this, &AURRLPawn::OnMidClick);
 	PlayerInputComponent->BindKey(EKeys::MiddleMouseButton, IE_Released, this, &AURRLPawn::OnMidRelease);
+	PlayerInputComponent->BindKey(EKeys::MouseScrollUp,   IE_Pressed,  this, &AURRLPawn::OnScrollUp);
+	PlayerInputComponent->BindKey(EKeys::MouseScrollDown, IE_Pressed,  this, &AURRLPawn::OnScrollDown);
 }
 
 void AURRLPawn::OnLeftClick()
@@ -161,4 +276,16 @@ void AURRLPawn::OnMidRelease()
 {
 	FSharedMemoryBridge::MouseRelease->button = 2;
 	std::atomic_ref<bool>(FSharedMemoryBridge::MouseRelease->consumed).store(false, std::memory_order_release);
+}
+
+void AURRLPawn::OnScrollUp()
+{
+	if (FSharedMemoryBridge::MouseWheel)
+		std::atomic_ref<int32>(FSharedMemoryBridge::MouseWheel->accum).fetch_add(-1, std::memory_order_relaxed);
+}
+
+void AURRLPawn::OnScrollDown()
+{
+	if (FSharedMemoryBridge::MouseWheel)
+		std::atomic_ref<int32>(FSharedMemoryBridge::MouseWheel->accum).fetch_add(1, std::memory_order_relaxed);
 }

@@ -49,6 +49,28 @@ struct SMouseRelease {
     int button;
     bool consumed = true;
 };
+
+// UE → Java: accumulated mouse-wheel delta.
+// UE atomically adds ±1; Java reads the value, dispatches N wheel events, and writes 0.
+struct SMouseWheel {
+    int32_t accum;  // positive = scroll down (zoom in), negative = scroll up (zoom out)
+};
+
+// Single key event in the key queue.
+struct SKeyEvent {
+    int32_t id;        // 400 = KEY_TYPED, 401 = KEY_PRESSED, 402 = KEY_RELEASED
+    int32_t keyCode;   // Java VK_ code (0 = VK_UNDEFINED for KEY_TYPED)
+    int32_t keyChar;   // Unicode codepoint; 0xFFFF = KeyEvent.CHAR_UNDEFINED
+    int32_t modifiers; // Java InputEvent bits: SHIFT=64, CTRL=128, ALT=512
+};
+
+// Lock-free SPSC key event ring buffer (UE produces, Java consumes).
+static constexpr int KEY_QUEUE_CAPACITY = 32;
+struct SKeyQueue {
+    int32_t writeHead;  // written by UE (producer)
+    int32_t readHead;   // written by Java (consumer)
+    SKeyEvent events[KEY_QUEUE_CAPACITY];
+};
 #pragma pack(pop)
 
 class FSharedMemoryBridge
@@ -66,6 +88,8 @@ public:
     static SMouseMove* MouseMove;
     static SMousePress* MousePress;
     static SMouseRelease* MouseRelease;
+    static SMouseWheel* MouseWheel;
+    static SKeyQueue*   KeyQueue;
 
     static void* Raw;
     static FSharedMemoryBridge SharedMemoryBridge;

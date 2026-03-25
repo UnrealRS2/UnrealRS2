@@ -9,12 +9,14 @@ FSharedMemoryBridge::~FSharedMemoryBridge()
 bool FSharedMemoryBridge::Init(const char* name)
 {
     const size_t shmSize =
-        sizeof(RLCameraStatus) + 
+        sizeof(RLCameraStatus) +
             sizeof(RLFrameBuffer) +
                 sizeof(SResolution) +
                     sizeof(SMouseMove) +
                         sizeof(SMousePress) +
-                            sizeof(SMouseRelease);
+                            sizeof(SMouseRelease) +
+                                sizeof(SMouseWheel) +
+                                    sizeof(SKeyQueue);
 
     hMapFile = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, name);
 
@@ -64,6 +66,12 @@ bool FSharedMemoryBridge::Init(const char* name)
     
     MouseRelease = reinterpret_cast<SMouseRelease*>(ptr);
     ptr += sizeof(SMouseRelease);
+
+    MouseWheel = reinterpret_cast<SMouseWheel*>(ptr);
+    ptr += sizeof(SMouseWheel);
+
+    KeyQueue = reinterpret_cast<SKeyQueue*>(ptr);
+    ptr += sizeof(SKeyQueue);
 
     TotalSize = ptr - reinterpret_cast<uint8_t*>(Raw);
 
