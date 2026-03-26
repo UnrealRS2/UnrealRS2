@@ -16,16 +16,28 @@ Textures / Animations
 
 There are some minor bugs but this is still WIP, and not ready for end users.  
 
-## Goal
-A modern Unreal-based frontend for RuneLite with real-time scene graph / camera / input sync
+## Goal  
+A modern Unreal-based frontend for RuneLite with real-time scene graph / camera / input sync  
 
-## Building
-Setup your windows environment for Unreal 5.7.4
-Build the Game configuration using Visual Studio 2022  
-Cook the content using Unreal
+## Building  
+Ensure URRL AND Unreal Editor are closed!  
+USE UNREAL BUILD TOOL, NOT AN IDE  
+```
+(Powershell)
+& "C:\Program Files\Epic Games\UE_5.7\Engine\Build\BatchFiles\Build.bat" URRLEditor Win64 Development -Project="***\UnrealRS2\URRL.uproject"
+```
 
 ## Running
-You must run via PIE (Play in Editor - Buggy) or via packaged build, it will not run correctly inside Rider  
-Using this would require a runelite plugin such as the one bundled in https://github.com/UnrealRS2/rl-gpushared-shim  
-You must also have the rl-gpushared-shim .dll on your PATH (or drop it in jvm/bin dir if you are lazy)
+You must build (or use from a release) rl-gpushared-shim.dll from this project (Clion) and place DLL on PATH
+You must build (or use from a release): https://github.com/UnrealRS2/runelite (modified GPU plugin / GPU Shared plugin)
 
+Once the rl-gpushared-shim DLL is on PATH, start our RuneLite  
+(Disable custom window chrome, restart, then maximize runelite)  
+Once at the login screen, open URRL.exe, then maximize URRL  
+  
+You are ready to play from Unreal!  
+  
+WARNING:  
+Do NOT close URRL while logged in, it will thread lock RuneLite  
+Do NOT disable GPU Shared plugin while logged in, it will crash RuneLite  
+Do NOT do any risky shit, this is a PREVIEW  
