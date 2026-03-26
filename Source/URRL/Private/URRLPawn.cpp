@@ -28,8 +28,14 @@ static int32 Win32ToJavaVK(uint32 Win32VK)
 {
 	switch (Win32VK)
 	{
-		case 0x0D: return 10;   // VK_RETURN  → Java VK_ENTER
-		case 0x2E: return 127;  // VK_DELETE  → Java VK_DELETE
+		case 0x0D: return 10;   // VK_RETURN           → Java VK_ENTER
+		case 0x2E: return 127;  // VK_DELETE           → Java VK_DELETE
+		case 0xA0: return 16;   // VK_LSHIFT           → Java VK_SHIFT
+		case 0xA1: return 16;   // VK_RSHIFT           → Java VK_SHIFT
+		case 0xA2: return 17;   // VK_LCONTROL         → Java VK_CONTROL
+		case 0xA3: return 17;   // VK_RCONTROL         → Java VK_CONTROL
+		case 0xA4: return 18;   // VK_LMENU (L-Alt)    → Java VK_ALT
+		case 0xA5: return 18;   // VK_RMENU (R-Alt)    → Java VK_ALT
 		default:   return (int32)Win32VK;
 	}
 }
@@ -68,16 +74,16 @@ public:
 		const int32  JavaVK = Win32ToJavaVK(Win32);
 		const TCHAR  Ch     = GetTypedChar(Win32);
 
-		// KEY_PRESSED (401)
+		PressedKeys.Add(Win32);
+
 		EnqueueKey(401, JavaVK, 0xFFFF, Mods);
 
-		// KEY_TYPED (400) for printable characters
-		if (Ch >= 0x20 && Ch != 0x7F) // exclude control chars
+		if (Ch >= 0x20 && Ch != 0x7F)
 		{
 			EnqueueKey(400, 0, (int32)Ch, Mods);
 		}
 
-		return false; // don't consume – UE still needs to process bindings
+		return false;
 	}
 
 	virtual bool HandleKeyUpEvent(FSlateApplication& /*SlateApp*/,
@@ -85,22 +91,37 @@ public:
 	{
 		if (!FSharedMemoryBridge::KeyQueue) return false;
 
-		const int32  Mods   = BuildMods(Evt.GetModifierKeys());
-		const uint32 Win32  = Evt.GetKeyCode();
-		const int32  JavaVK = Win32ToJavaVK(Win32);
-
-		// KEY_RELEASED (402)
-		EnqueueKey(402, JavaVK, 0xFFFF, Mods);
+		const uint32 Win32 = Evt.GetKeyCode();
+		PressedKeys.Remove(Win32);
+		EnqueueKey(402, Win32ToJavaVK(Win32), 0xFFFF, BuildMods(Evt.GetModifierKeys()));
 		return false;
 	}
 
+	// Called from AURRLPawn::Tick (guaranteed every frame) — detects any
+	// releases that HandleKeyUpEvent missed (focus loss, event consumed, etc.)
+	void PollReleases()
+	{
+		if (!FSharedMemoryBridge::KeyQueue) return;
+
+		for (auto It = PressedKeys.CreateIterator(); It; ++It)
+		{
+			if (!(GetAsyncKeyState((int)*It) & 0x8000))
+			{
+				EnqueueKey(402, Win32ToJavaVK(*It), 0xFFFF, 0);
+				It.RemoveCurrent();
+			}
+		}
+	}
+
 private:
+	TSet<uint32> PressedKeys;
+
 	static int32 BuildMods(const FModifierKeysState& M)
 	{
 		int32 Out = 0;
-		if (M.IsShiftDown())   Out |= 64;   // Java InputEvent.SHIFT_MASK
-		if (M.IsControlDown()) Out |= 128;  // Java InputEvent.CTRL_MASK
-		if (M.IsAltDown())     Out |= 512;  // Java InputEvent.ALT_MASK
+		if (M.IsShiftDown())   Out |= 64;
+		if (M.IsControlDown()) Out |= 128;
+		if (M.IsAltDown())     Out |= 512;
 		return Out;
 	}
 };
@@ -161,6 +182,8 @@ void AURRLPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void AURRLPawn::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	if (KeyForwarder) KeyForwarder->PollReleases();
 
 	if (bFreeRoam)
 	{
