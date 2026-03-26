@@ -6,7 +6,9 @@ It communicates through a shared RAM block to sync data in real time.
 see: bundled under ./rl-gpushared-shim
 
 <img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/b29c2cfc-5d27-429c-86e7-f397a52039de" />
-<img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/f6098fcd-5534-4991-a4fb-e51cee131d81" />
+<img width="2048" height="1044" alt="image" src="https://github.com/user-attachments/assets/84463d0c-5b81-4a3c-a0cf-00d8b1741ebc" />
+
+
 
 ## Status  
 Playable!  
