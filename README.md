@@ -27,9 +27,9 @@ USE UNREAL BUILD TOOL, NOT AN IDE
 & "C:\Program Files\Epic Games\UE_5.7\Engine\Build\BatchFiles\Build.bat" URRLEditor Win64 Development -Project="***\UnrealRS2\URRL.uproject"
 ```
 
-## Running
-You must build (or use from a release) rl-gpushared-shim.dll from this project (Clion) and place DLL on PATH
-You must build (or use from a release): https://github.com/UnrealRS2/runelite (modified GPU plugin / GPU Shared plugin)
+## Running  
+You must build (or use from a release) rl-gpushared-shim.dll from this project (Clion) and place DLL on PATH  
+You must build (or use from a release): https://github.com/UnrealRS2/runelite (modified GPU plugin / GPU Shared plugin)  
 
 Once the rl-gpushared-shim DLL is on PATH, start our RuneLite  
 (Disable custom window chrome, restart, then maximize runelite)  
