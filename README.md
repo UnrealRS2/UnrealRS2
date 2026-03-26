@@ -8,13 +8,9 @@ see: bundled under ./rl-gpushared-shim
 <img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/b29c2cfc-5d27-429c-86e7-f397a52039de" />
 <img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/f6098fcd-5534-4991-a4fb-e51cee131d81" />
 
-## Status
-UI / Overlays forwarded to unreal  
-(Captures 4K/120FPS with reasonable hardware.)  
-Scene Graph forwarded to unreal  
-Textures / Animations  
-
-There are some minor bugs but this is still WIP, and not ready for end users.  
+## Status  
+Playable!  
+There are some bugs but this is WIP, and not ready for end users.  
 
 ## Goal  
 A modern Unreal-based frontend for RuneLite with real-time scene graph / camera / input sync  
