@@ -5,7 +5,6 @@
 #define NOMINMAX
 
 #include "CoreMinimal.h"
-#include "URRLHud.h"
 #include "GameFramework/GameModeBase.h"
 #include "URRLGameMode.generated.h"
 
@@ -16,8 +15,7 @@ class URRL_API AURRLGameMode : public AGameModeBase
 
 public:
 	AURRLGameMode();
-	static AURRLHud* URRLHud;
-	
+
 protected:
 	virtual void BeginPlay() override;
 };

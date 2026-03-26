@@ -2,7 +2,6 @@
 
 #include "URRL.h"
 
-#include "FShimTick.h"
 #include "URRLGameMode.h"
 #include "SharedMemoryBridge.h"
 #include "SceneGraphBridge.h"
@@ -10,8 +9,6 @@
 #include "TextureBridge.h"
 #include "Modules/ModuleManager.h"
 #include "CoreMinimal.h"
-#include "GameFramework/HUD.h"
-#include "URRLHud.h"
 #include "Engine/Engine.h"
 
 FSharedMemoryBridge FSharedMemoryBridge::SharedMemoryBridge{};
@@ -26,8 +23,6 @@ SMousePress*    FSharedMemoryBridge::MousePress        = nullptr;
 SMouseRelease*  FSharedMemoryBridge::MouseRelease      = nullptr;
 SMouseWheel*    FSharedMemoryBridge::MouseWheel        = nullptr;
 SKeyQueue*      FSharedMemoryBridge::KeyQueue          = nullptr;
-URRL_API AURRLHud* AURRLGameMode::URRLHud;
-static FShimTick GCameraTick;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -53,18 +48,6 @@ static void InitOnWorld(UWorld* World)
 		FVector::ZeroVector, FRotator::ZeroRotator, Params);
 
 	UE_LOG(LogTemp, Log, TEXT("URRL: init complete"));
-
-	// Defer the HUD lookup one tick because the PlayerController may not exist yet
-	World->GetTimerManager().SetTimerForNextTick([World]()
-	{
-		if (GEngine && GEngine->GameViewport)
-		{
-			if (APlayerController* PC = World->GetFirstPlayerController())
-			{
-				AURRLGameMode::URRLHud = Cast<AURRLHud>(PC->GetHUD());
-			}
-		}
-	});
 }
 
 // ── Module ────────────────────────────────────────────────────────────────────

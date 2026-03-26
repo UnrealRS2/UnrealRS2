@@ -4,7 +4,6 @@
 #define NOMINMAX
 
 #include "URRLHud.h"
-#include "CanvasItem.h"
 #include "Blueprint/UserWidget.h"
 #include "Components/Image.h"
 #include "Components/SizeBox.h"
@@ -30,52 +29,6 @@ void AURRLHud::DrawHUD()
 	if (RLFrameBuffer& F = *FSharedMemoryBridge::RLFrameBufferPtr;
 		std::atomic_ref<bool>(F.ready).load(std::memory_order_acquire))
 		UpdateFromSharedMemory(FSharedMemoryBridge::RLFrameBufferPtr);
-	
-	FVector2D ScreenPosition(50, 50);
-	FVector2D ScreenPosition2(50, 75);
-	FVector2D ScreenPosition3(50, 100);
-	FVector2D ScreenPosition4(50, 125);
-	FVector2D ScreenPosition5(50, 150);
-	FCanvasTextItem TextItem(ScreenPosition, FText::FromString(CameraDebugText), GEngine->GetMediumFont(), FLinearColor::Green);
-	FCanvasTextItem TextItem2(ScreenPosition2, FText::FromString(FrontFrameInfoDebugText), GEngine->GetMediumFont(), FLinearColor::Green);
-	FCanvasTextItem TextItem3(ScreenPosition3, FText::FromString(BackFrameInfoDebugText), GEngine->GetMediumFont(), FLinearColor::Green);
-	FCanvasTextItem TextItem4(ScreenPosition4, FText::FromString(ConsumesPerSecondText), GEngine->GetMediumFont(), FLinearColor::Green);
-	FCanvasTextItem TextItem5(ScreenPosition5, FText::FromString(DebugText), GEngine->GetMediumFont(), FLinearColor::Green);
-	TextItem.EnableShadow(FLinearColor::Black);
-	TextItem2.EnableShadow(FLinearColor::Black);
-	TextItem3.EnableShadow(FLinearColor::Black);
-	TextItem4.EnableShadow(FLinearColor::Black);
-	TextItem5.EnableShadow(FLinearColor::Black);
-	Canvas->DrawItem(TextItem);
-	Canvas->DrawItem(TextItem2);
-	Canvas->DrawItem(TextItem3);
-	Canvas->DrawItem(TextItem4);
-	Canvas->DrawItem(TextItem5);
-}
-
-void AURRLHud::UpdateCameraDebug(const FString& NewText)
-{
-	CameraDebugText = NewText;
-}
-
-void AURRLHud::UpdateFrontFrameInfoDebug(const FString& NewText)
-{
-	FrontFrameInfoDebugText = NewText;
-}
-
-void AURRLHud::UpdateBackFrameInfoDebug(const FString& NewText)
-{
-	BackFrameInfoDebugText = NewText;
-}
-
-void AURRLHud::UpdateConsumesPerSecondDebug(const FString& NewText)
-{
-	ConsumesPerSecondText = NewText;
-}
-
-void AURRLHud::UpdateDebugText(const FString& NewText)
-{
-	DebugText = NewText;
 }
 
 int lastX = -1;
@@ -85,19 +38,19 @@ bool moveUpdate = false;
 void AURRLHud::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	
+
 	if (APlayerController* PC = GetOwningPlayerController())
 	{
 		float X, Y;
 		PC->GetMousePosition(X, Y);
 		if (lastX != static_cast<int>(X) || lastY != static_cast<int>(Y))
 			moveUpdate = true;
-		
+
 		if (moveUpdate)
 		{
 			lastX = X;
 			lastY = Y;
-			
+
 			if (std::atomic_ref<bool>(FSharedMemoryBridge::MouseMove->consumed).load(std::memory_order_acquire))
 			{
 				FSharedMemoryBridge::MouseMove->x = lastX;
@@ -105,20 +58,6 @@ void AURRLHud::Tick(float DeltaSeconds)
 				std::atomic_ref<bool>(FSharedMemoryBridge::MouseMove->consumed).store(false, std::memory_order_release);
 			}
 		}
-		
-		// Optional: debug print
-		// GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::Green, FString::Printf(TEXT("MouseX: %f, MouseY: %f"), X, Y));
-	}
-	
-	CPSAccumTime += DeltaSeconds;
-	if (CPSAccumTime >= 1.0f) // 1 second has passed
-	{
-		LastCPS = ConsumeCounter;
-		ConsumeCounter = 0;
-		CPSAccumTime -= 1.0f;
-        
-		// Optional: update a debug string for HUD
-		UpdateConsumesPerSecondDebug(FString::Printf(TEXT("CPS: %d"), LastCPS));
 	}
 }
 
@@ -126,12 +65,12 @@ void AURRLHud::Tick(float DeltaSeconds)
 void AURRLHud::BeginPlay()
 {
 	Super::BeginPlay();
-	
+
 	if (APlayerController* PC = GEngine->GetFirstLocalPlayerController(GWorld))
 	{
 		UClass* FrameBufferClass = LoadClass<UUserWidget>(
-	nullptr,
-	TEXT("/Game/Framebuffer.Framebuffer_C")
+			nullptr,
+			TEXT("/Game/Framebuffer.Framebuffer_C")
 		);
 
 		if (!FrameBufferClass)
@@ -139,26 +78,18 @@ void AURRLHud::BeginPlay()
 			UE_LOG(LogTemp, Error, TEXT("Failed to load Framebuffer Blueprint class"));
 			return;
 		}
-		
-		
+
 		UUserWidget* Widget = CreateWidget<UUserWidget>(PC, FrameBufferClass);
 		if (!Widget)
 		{
 			UE_LOG(LogTemp, Error, TEXT("Failed to create Framebuffer widget"));
 			return;
 		}
-		
-		Widget->AddToViewport();
-				
-		GFrameBufferSizeBox = Cast<USizeBox>(Widget->GetWidgetFromName(TEXT("FrameBufferSizeBox")));
-		
-		// Grab the Image widget manually
-		GFrameBufferImage = Cast<UImage>(Widget->GetWidgetFromName(TEXT("FrameBufferImage")));
 
-		if (GFrameBufferImage)
-		{
-			UpdateDebugText(FString::Printf(TEXT("Acquired %s"), *Widget->GetName()));
-		}
+		Widget->AddToViewport();
+
+		GFrameBufferSizeBox = Cast<USizeBox>(Widget->GetWidgetFromName(TEXT("FrameBufferSizeBox")));
+		GFrameBufferImage = Cast<UImage>(Widget->GetWidgetFromName(TEXT("FrameBufferImage")));
 	}
 }
 
@@ -201,7 +132,6 @@ bool AURRLHud::UpdateFromSharedMemory(RLFrameBuffer* Info)
             targetHeight = H * Ratio;
         }
 
-        // Bind widget to this texture (only on create/resize, not every frame)
         if (GFrameBufferImage)
         {
             GFrameBufferImage->SetBrushFromTexture(GDrawTexture, true);
@@ -214,8 +144,6 @@ bool AURRLHud::UpdateFromSharedMemory(RLFrameBuffer* Info)
     std::atomic_ref<bool>(Info->ready).store(false, std::memory_order_relaxed);
 
     // --- Step 3: Upload pixels on the render thread using the raw shared-memory pointer ---
-    // No memcpy needed: Java checks consumed before writing, and consumed stays false
-    // until the render command sets it true after RHIUpdateTexture2D completes.
     const uint8* Pixels = Info->pixels;
     UTexture2D* Tex = GDrawTexture;
     const FUpdateTextureRegion2D Region(0, 0, 0, 0, W, H);
@@ -234,11 +162,5 @@ bool AURRLHud::UpdateFromSharedMemory(RLFrameBuffer* Info)
         }
     );
 
-    ConsumeCounter++;
     return true;
 }
-
-
-
-
-

@@ -2,11 +2,9 @@
 #include "URRLGameMode.h"
 
 #include "URRLHud.h"
-#include "SharedMemoryBridge.h"
 #include "GameFramework/GameUserSettings.h"
 #include "CoreMinimal.h"
 #include "URRLPawn.h"
-#include "GameFramework/Pawn.h"
 
 AURRLGameMode::AURRLGameMode()
 {
